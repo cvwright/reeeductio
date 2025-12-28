@@ -485,8 +485,20 @@ paths:
                   size:
                     type: integer
                     description: Size in bytes
+        '400':
+          description: Invalid blob_id format or type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Blob already exists (duplicate content-addressed identifier)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '413':
           description: Blob too large
           content:

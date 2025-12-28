@@ -15,8 +15,11 @@ from database import Database
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import encode_channel_id, encode_user_id, decode_identifier
+from filesystem_blob_manager import FilesystemBlobManager
+from database_blob_manager import DatabaseBlobManager
 import tempfile
 import base64
+import shutil
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 
@@ -232,6 +235,97 @@ def test_authorization():
         os.unlink(db_path)
 
 
+def test_blob_storage():
+    """Test blob storage with both filesystem and database backends"""
+    print("Testing blob storage...")
+
+    crypto = CryptoUtils()
+
+    # Test data
+    blob_data = b"This is encrypted blob content"
+    blob_id = crypto.compute_blob_id(blob_data)
+
+    # Test FilesystemBlobManager
+    print("  Testing FilesystemBlobManager...")
+    blob_dir = tempfile.mkdtemp()
+    try:
+        fs_manager = FilesystemBlobManager(blob_dir)
+
+        # Test successful upload
+        fs_manager.add_blob(blob_id, blob_data)
+        print("  ✓ Blob upload works")
+
+        # Test retrieval
+        retrieved = fs_manager.get_blob(blob_id)
+        assert retrieved == blob_data
+        print("  ✓ Blob retrieval works")
+
+        # Test duplicate upload (should raise FileExistsError)
+        try:
+            fs_manager.add_blob(blob_id, blob_data)
+            assert False, "Should have raised FileExistsError"
+        except FileExistsError:
+            print("  ✓ Duplicate blob rejected")
+
+        # Test invalid blob_id (wrong type)
+        try:
+            invalid_id = encode_user_id(b"x" * 32)  # USER type instead of BLOB
+            fs_manager.add_blob(invalid_id, blob_data)
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "BLOB type" in str(e)
+            print("  ✓ Invalid blob_id rejected")
+
+        # Test retrieval of non-existent blob
+        non_existent_id = crypto.compute_blob_id(b"different content")
+        assert fs_manager.get_blob(non_existent_id) is None
+        print("  ✓ Non-existent blob returns None")
+
+        # Test deletion
+        assert fs_manager.delete_blob(blob_id) == True
+        assert fs_manager.get_blob(blob_id) is None
+        print("  ✓ Blob deletion works")
+
+        # Test deleting non-existent blob
+        assert fs_manager.delete_blob(blob_id) == False
+        print("  ✓ Deleting non-existent blob returns False")
+
+    finally:
+        shutil.rmtree(blob_dir)
+
+    # Test DatabaseBlobManager
+    print("  Testing DatabaseBlobManager...")
+    with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+        db_path = f.name
+
+    try:
+        db = Database(db_path)
+        db_manager = DatabaseBlobManager(db)
+
+        # Test successful upload
+        db_manager.add_blob(blob_id, blob_data)
+        print("  ✓ Database blob upload works")
+
+        # Test retrieval
+        retrieved = db_manager.get_blob(blob_id)
+        assert retrieved == blob_data
+        print("  ✓ Database blob retrieval works")
+
+        # Test deletion
+        assert db_manager.delete_blob(blob_id) == True
+        assert db_manager.get_blob(blob_id) is None
+        print("  ✓ Database blob deletion works")
+
+        # Test deleting non-existent blob
+        assert db_manager.delete_blob(blob_id) == False
+        print("  ✓ Database: Deleting non-existent blob returns False")
+
+    finally:
+        os.unlink(db_path)
+
+    print("Blob storage tests passed!\n")
+
+
 def test_integration():
     """Test end-to-end workflow"""
     print("Testing end-to-end workflow...")
@@ -381,8 +475,9 @@ if __name__ == "__main__":
         test_database()
         test_crypto()
         test_authorization()
+        test_blob_storage()
         test_integration()
-        
+
         print("=" * 60)
         print("ALL TESTS PASSED! ✓")
         print("=" * 60)

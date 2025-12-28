@@ -28,7 +28,7 @@ from identifiers import (
     encode_channel_id, encode_user_id, encode_message_id, encode_blob_id,
     extract_public_key, extract_hash, decode_identifier, IdType
 )
-from database_blob_manager import DatabaseBlobManager
+from filesystem_blob_manager import FilesystemBlobManager
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -42,7 +42,7 @@ db = Database("messaging.db")
 crypto = CryptoUtils()
 authz = AuthorizationEngine(db, crypto)
 security = HTTPBearer()
-blob_manager = DatabaseBlobManager(db)
+blob_manager = FilesystemBlobManager("blobs")
 
 # JWT configuration
 JWT_SECRET = secrets.token_urlsafe(32)  # In production, load from environment
@@ -569,7 +569,18 @@ async def upload_blob(
     blob_id = crypto.compute_blob_id(blob_data)
 
     # Store blob
-    blob_manager.add_blob(blob_id, blob_data)
+    try:
+        blob_manager.add_blob(blob_id, blob_data)
+    except FileExistsError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Blob {blob_id} already exists"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid blob: {str(e)}"
+        )
 
     return BlobUploadResponse(
         blob_id=blob_id,
