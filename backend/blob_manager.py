@@ -2,7 +2,7 @@
 Blob storage abstraction layer for E2EE messaging system
 
 Provides a base BlobManager interface and concrete implementations for
-storing encrypted blobs in different backends (database, filesystem, etc.)
+storing encrypted blobs in different backends (database, filesystem, S3, etc.)
 """
 
 from abc import ABC, abstractmethod
@@ -48,3 +48,27 @@ class BlobManager(ABC):
             True if blob was deleted, False if it didn't exist
         """
         pass
+
+    def get_upload_url(self, blob_id: str) -> Optional[str]:
+        """
+        Get a pre-signed URL for uploading a blob (optional, for S3-compatible backends)
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            Pre-signed URL for upload, or None if direct upload not supported
+        """
+        return None
+
+    def get_download_url(self, blob_id: str) -> Optional[str]:
+        """
+        Get a pre-signed URL for downloading a blob (optional, for S3-compatible backends)
+
+        Args:
+            blob_id: Content-addressed identifier for the blob
+
+        Returns:
+            Pre-signed URL for download, or None if direct download not supported
+        """
+        return None

@@ -10,7 +10,7 @@ A capability-based, end-to-end encrypted messaging system with:
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, Path as PathParam
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
 import jwt
@@ -562,6 +562,16 @@ async def upload_blob(
     current_user: dict = Depends(get_current_user)
 ):
     """Upload an encrypted blob with explicit blob_id"""
+    # Check if blob manager supports pre-signed URLs
+    upload_url = blob_manager.get_upload_url(blob_id)
+    if upload_url:
+        # Redirect client to upload directly to S3
+        return RedirectResponse(
+            url=upload_url,
+            status_code=307  # Temporary redirect, preserving method (PUT)
+        )
+
+    # Direct upload to server
     # In real implementation, read from request.body()
     # For now, this is a placeholder
     blob_data = request
@@ -602,6 +612,16 @@ async def download_blob(
     current_user: dict = Depends(get_current_user)
 ):
     """Download a blob by its ID"""
+    # Check if blob manager supports pre-signed URLs
+    download_url = blob_manager.get_download_url(blob_id)
+    if download_url:
+        # Redirect client to download directly from S3
+        return RedirectResponse(
+            url=download_url,
+            status_code=307  # Temporary redirect
+        )
+
+    # Direct download from server
     blob_data = blob_manager.get_blob(blob_id)
     if not blob_data:
         raise HTTPException(status_code=404, detail="Blob not found")
