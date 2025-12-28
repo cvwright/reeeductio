@@ -1,0 +1,707 @@
+openapi: 3.0.3
+info:
+  title: E2EE PubSub Messaging API
+  description: |
+    End-to-end encrypted messaging system with capability-based authorization.
+    
+    ## Architecture
+    - **Channels**: Access control boundary (one shared symmetric key)
+    - **Topics**: Message streams within a channel (independent blockchain-like chains)
+    - **State**: Per-channel key-value store (plaintext or encrypted)
+    - **Capabilities**: Granular, signed permissions using public key cryptography
+    
+    ## Security Model
+    - Zero-knowledge server (can't decrypt message content)
+    - Capability-based authorization with signature verification
+    - Message integrity via hash chains
+    - Channel creator (channel public key) has implicit admin rights
+  version: 1.0.0
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: Challenge-response authentication using Ed25519 signatures
+  - name: State
+    description: Channel state storage (members, capabilities, metadata)
+  - name: Messages
+    description: Blockchain-style message streams
+  - name: Blobs
+    description: Encrypted file storage
+  - name: WebSocket
+    description: Real-time message streaming
+
+paths:
+  /channels/{channel_id}/auth/challenge:
+    post:
+      tags: [Authentication]
+      summary: Request authentication challenge
+      description: Get a random nonce to sign for authentication
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [public_key]
+              properties:
+                public_key:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed user identifier (44-char URL-safe base64, Ed25519 public key with header byte)
+      responses:
+        '200':
+          description: Challenge issued successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge:
+                    type: string
+                    format: base64
+                    description: Random nonce to sign
+                  expires_at:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds when challenge expires
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /channels/{channel_id}/auth/verify:
+    post:
+      tags: [Authentication]
+      summary: Verify signed challenge and get JWT
+      description: Submit signed challenge to authenticate and receive JWT token
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [public_key, signature, challenge]
+              properties:
+                public_key:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed user identifier (44-char URL-safe base64)
+                signature:
+                  type: string
+                  format: base64
+                  description: Signature of challenge
+                challenge:
+                  type: string
+                  format: base64
+                  description: The challenge that was signed
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT bearer token
+                  expires_at:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds when token expires
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /channels/{channel_id}/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh JWT token
+      description: Get a new JWT token before the current one expires
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: New JWT bearer token
+                  expires_at:
+                    type: integer
+                    format: int64
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /channels/{channel_id}/state/{path}:
+    get:
+      tags: [State]
+      summary: Get state value
+      description: Retrieve state data (plaintext or encrypted)
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: State path (e.g., "members/abc123" or "user/xyz/preferences")
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: State retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    oneOf:
+                      - type: object
+                      - type: string
+                    description: Plaintext JSON or base64 encrypted blob
+                  encrypted:
+                    type: boolean
+                    description: Whether data is encrypted
+                  updated_at:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds
+                  updated_by:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                    description: Typed user identifier of last updater
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    put:
+      tags: [State]
+      summary: Set state value
+      description: Create or update state data with capability verification
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data, encrypted]
+              properties:
+                data:
+                  oneOf:
+                    - type: object
+                    - type: string
+                  description: Plaintext JSON or base64 encrypted blob
+                encrypted:
+                  type: boolean
+                  description: Whether data is encrypted
+                signature:
+                  type: string
+                  format: base64
+                  description: Required for privileged paths (e.g., members/*/rights/)
+                signed_by:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed user identifier of signer
+      responses:
+        '200':
+          description: State updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path:
+                    type: string
+                  updated_at:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    delete:
+      tags: [State]
+      summary: Delete state value
+      description: Remove state data with capability verification
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                signature:
+                  type: string
+                  format: base64
+                signed_by:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+      responses:
+        '204':
+          description: State deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /channels/{channel_id}/topics/{topic_id}/messages:
+    get:
+      tags: [Messages]
+      summary: Query messages in a topic
+      description: Retrieve messages with optional time-based filtering
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/TopicId'
+        - name: from
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Server timestamp in milliseconds (inclusive) - get messages after this time
+        - name: to
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Server timestamp in milliseconds (inclusive) - get messages before this time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+          description: Maximum number of messages to return
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Messages retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  has_more:
+                    type: boolean
+                    description: Whether more messages exist beyond the limit
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Messages]
+      summary: Post a message to a topic
+      description: |
+        Publish an encrypted message to the topic. Server validates:
+        - User has 'create' capability on this topic's message path
+        - prev_hash matches the current chain head
+        - Message hash is correctly computed
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/TopicId'
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prev_hash, encrypted_payload, message_hash, signature]
+              properties:
+                prev_hash:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  nullable: true
+                  description: Typed message identifier of previous message (null for first message)
+                encrypted_payload:
+                  type: string
+                  format: base64
+                  description: Encrypted message content
+                message_hash:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed message identifier (SHA256 hash with header, client-computed)
+                signature:
+                  type: string
+                  format: base64
+                  description: Ed25519 signature over message_hash by sender
+      responses:
+        '201':
+          description: Message created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message_hash:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                  server_timestamp:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds
+        '400':
+          description: Invalid message (bad hash, broken chain, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Chain conflict (prev_hash doesn't match current head)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /channels/{channel_id}/messages/{message_hash}:
+    get:
+      tags: [Messages]
+      summary: Get specific message by hash
+      description: Retrieve a single message from any topic in the channel
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: message_hash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{44}$'
+            minLength: 44
+            maxLength: 44
+          description: Typed message identifier
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Message retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /blobs:
+    post:
+      tags: [Blobs]
+      summary: Upload encrypted blob
+      description: |
+        Upload encrypted binary data (attachments, images, etc.).
+        Returns a blob_id for future retrieval.
+        Blobs are content-addressed and global (not per-channel).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Blob uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blob_id:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                    description: Typed blob identifier (SHA256 hash with header)
+                  size:
+                    type: integer
+                    description: Size in bytes
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: Blob too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /blobs/{blob_id}:
+    get:
+      tags: [Blobs]
+      summary: Download blob
+      description: Retrieve encrypted blob by its content hash
+      parameters:
+        - name: blob_id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{44}$'
+            minLength: 44
+            maxLength: 44
+          description: Typed blob identifier
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Blob retrieved successfully
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags: [Blobs]
+      summary: Delete blob
+      description: Remove blob from storage
+      parameters:
+        - name: blob_id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{44}$'
+            minLength: 44
+            maxLength: 44
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Blob deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/verify
+
+  parameters:
+    ChannelId:
+      name: channel_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{44}$'
+        minLength: 44
+        maxLength: 44
+      description: Typed channel identifier (44-char URL-safe base64, Ed25519 public key with header byte)
+
+    TopicId:
+      name: topic_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$'
+        minLength: 2
+        maxLength: 64
+      description: Topic identifier (slug format - lowercase alphanumeric, hyphens, underscores)
+
+  schemas:
+    Message:
+      type: object
+      properties:
+        message_hash:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed message identifier
+        topic_id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$'
+        prev_hash:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          nullable: true
+          description: Typed message identifier of previous message
+        encrypted_payload:
+          type: string
+          format: base64
+          description: Encrypted message content
+        sender:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed user identifier of message sender
+        signature:
+          type: string
+          format: base64
+          description: Ed25519 signature over message_hash by sender
+        server_timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds (for queries)
+
+    Capability:
+      type: object
+      required: [op, path, granted_by, granted_at, signature]
+      properties:
+        op:
+          type: string
+          enum: [read, create, write]
+          description: Operation type (write is superset of create)
+        path:
+          type: string
+          description: State path pattern (supports * wildcard)
+          example: "members/*/rights/"
+        granted_by:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed user identifier of granter
+        granted_at:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when granted
+        signature:
+          type: string
+          format: base64
+          description: Ed25519 signature of capability
+
+    Member:
+      type: object
+      properties:
+        public_key:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed user identifier
+        added_at:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when member was added
+        added_by:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed user identifier of user who added this member
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+        details:
+          type: object
+          description: Additional error details
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Authentication required or failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
