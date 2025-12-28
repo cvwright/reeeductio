@@ -555,18 +555,26 @@ async def get_message_by_hash(
 # Blob Endpoints
 # ============================================================================
 
-@app.post("/blobs", status_code=201, response_model=BlobUploadResponse)
+@app.put("/blobs/{blob_id}", status_code=201, response_model=BlobUploadResponse)
 async def upload_blob(
+    blob_id: str,
     request: bytes = Depends(lambda: None),  # Will be overridden by actual request body
     current_user: dict = Depends(get_current_user)
 ):
-    """Upload an encrypted blob"""
+    """Upload an encrypted blob with explicit blob_id"""
     # In real implementation, read from request.body()
     # For now, this is a placeholder
     blob_data = request
 
-    # Compute blob ID as typed identifier (SHA256 of content)
-    blob_id = crypto.compute_blob_id(blob_data)
+    # Compute expected blob ID from content to verify integrity
+    expected_blob_id = crypto.compute_blob_id(blob_data)
+
+    # Verify that provided blob_id matches the content hash
+    if blob_id != expected_blob_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"blob_id mismatch: provided {blob_id}, expected {expected_blob_id}"
+        )
 
     # Store blob
     try:

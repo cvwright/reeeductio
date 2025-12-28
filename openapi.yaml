@@ -451,14 +451,24 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-  /blobs:
-    post:
+  /blobs/{blob_id}:
+    put:
       tags: [Blobs]
       summary: Upload encrypted blob
       description: |
-        Upload encrypted binary data (attachments, images, etc.).
-        Returns a blob_id for future retrieval.
+        Upload encrypted binary data (attachments, images, etc.) with explicit blob_id.
+        The blob_id must match the SHA256 hash of the content.
         Blobs are content-addressed and global (not per-channel).
+      parameters:
+        - name: blob_id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{44}$'
+            minLength: 44
+            maxLength: 44
+          description: Typed blob identifier (SHA256 hash with header)
       security:
         - BearerAuth: []
       requestBody:
@@ -486,7 +496,7 @@ paths:
                     type: integer
                     description: Size in bytes
         '400':
-          description: Invalid blob_id format or type
+          description: Invalid blob_id format, type, or blob_id doesn't match content hash
           content:
             application/json:
               schema:
@@ -506,7 +516,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /blobs/{blob_id}:
     get:
       tags: [Blobs]
       summary: Download blob
