@@ -74,20 +74,10 @@ class Database:
             """)
             
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_messages_timestamp 
+                CREATE INDEX IF NOT EXISTS idx_messages_timestamp
                 ON messages(channel_id, topic_id, server_timestamp DESC)
             """)
-            
-            # Blobs table - content-addressed binary storage
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS blobs (
-                    blob_id TEXT NOT NULL PRIMARY KEY,
-                    data BLOB NOT NULL,
-                    size INTEGER NOT NULL,
-                    uploaded_at INTEGER NOT NULL
-                )
-            """)
-            
+
             conn.commit()
     
     # ========================================================================
@@ -325,37 +315,3 @@ class Database:
                 "message_hash": row["message_hash"]
             }
     
-    # ========================================================================
-    # Blob Operations
-    # ========================================================================
-    
-    def add_blob(self, blob_id: str, data: bytes):
-        """Store a blob"""
-        import time
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO blobs
-                (blob_id, data, size, uploaded_at)
-                VALUES (?, ?, ?, ?)
-            """, (blob_id, data, len(data), int(time.time() * 1000)))
-    
-    def get_blob(self, blob_id: str) -> Optional[bytes]:
-        """Retrieve a blob"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT data FROM blobs WHERE blob_id = ?
-            """, (blob_id,))
-            
-            row = cursor.fetchone()
-            return row["data"] if row else None
-    
-    def delete_blob(self, blob_id: str) -> bool:
-        """Delete a blob"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM blobs WHERE blob_id = ?
-            """, (blob_id,))
-            return cursor.rowcount > 0

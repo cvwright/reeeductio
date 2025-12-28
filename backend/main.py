@@ -28,6 +28,7 @@ from identifiers import (
     encode_channel_id, encode_user_id, encode_message_id, encode_blob_id,
     extract_public_key, extract_hash, decode_identifier, IdType
 )
+from database_blob_manager import DatabaseBlobManager
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -41,6 +42,7 @@ db = Database("messaging.db")
 crypto = CryptoUtils()
 authz = AuthorizationEngine(db, crypto)
 security = HTTPBearer()
+blob_manager = DatabaseBlobManager(db)
 
 # JWT configuration
 JWT_SECRET = secrets.token_urlsafe(32)  # In production, load from environment
@@ -567,7 +569,7 @@ async def upload_blob(
     blob_id = crypto.compute_blob_id(blob_data)
 
     # Store blob
-    db.add_blob(blob_id, blob_data)
+    blob_manager.add_blob(blob_id, blob_data)
 
     return BlobUploadResponse(
         blob_id=blob_id,
@@ -581,10 +583,10 @@ async def download_blob(
     current_user: dict = Depends(get_current_user)
 ):
     """Download a blob by its ID"""
-    blob_data = db.get_blob(blob_id)
+    blob_data = blob_manager.get_blob(blob_id)
     if not blob_data:
         raise HTTPException(status_code=404, detail="Blob not found")
-    
+
     return Response(content=blob_data, media_type="application/octet-stream")
 
 
@@ -594,9 +596,9 @@ async def delete_blob(
     current_user: dict = Depends(get_current_user)
 ):
     """Delete a blob"""
-    if not db.delete_blob(blob_id):
+    if not blob_manager.delete_blob(blob_id):
         raise HTTPException(status_code=404, detail="Blob not found")
-    
+
     return Response(status_code=204)
 
 
