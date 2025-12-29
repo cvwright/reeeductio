@@ -332,7 +332,14 @@ async def put_state(
                 status_code=400,
                 detail="Signature required for capability grants"
             )
-        
+
+        # Capability grants must be plaintext dicts
+        if not isinstance(state_data.data, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Capability grants must be plaintext JSON objects"
+            )
+
         # Verify the capability itself
         if not authz.verify_capability_grant(
             channel_id,

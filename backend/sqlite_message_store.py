@@ -111,7 +111,7 @@ class SqliteMessageStore(MessageStore):
                 FROM messages
                 WHERE channel_id = ? AND topic_id = ?
             """
-            params = [channel_id, topic_id]
+            params: List[Any] = [channel_id, topic_id]
 
             if from_ts is not None:
                 query += " AND server_timestamp >= ?"
