@@ -2,6 +2,8 @@
 End-to-end integration tests
 """
 import pytest
+import json
+import base64
 
 from identifiers import decode_identifier
 
@@ -15,15 +17,16 @@ def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_ke
     user_private = user_keypair['private']
 
     # Add admin as member
+    admin_member_data = {
+        "public_key": admin_id,
+        "added_at": 12345000,
+        "added_by": admin_id
+    }
+    admin_member_b64 = base64.b64encode(json.dumps(admin_member_data).encode()).decode()
     state_store.set_state(
         channel_id,
         f"members/{admin_id}",
-        {
-            "public_key": admin_id,
-            "added_at": 12345000,
-            "added_by": admin_id
-        },
-        encrypted=False,
+        admin_member_b64,
         updated_by=admin_id,
         updated_at=12345000
     )
@@ -40,11 +43,11 @@ def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_ke
     )
     admin_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
 
+    admin_cap_b64 = base64.b64encode(json.dumps(admin_cap).encode()).decode()
     state_store.set_state(
         channel_id,
         f"members/{admin_id}/rights/admin",
-        admin_cap,
-        encrypted=False,
+        admin_cap_b64,
         updated_by=admin_id,
         updated_at=12345000
     )
@@ -52,15 +55,16 @@ def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_ke
     # Admin adds user (should work)
     assert authz.check_permission(channel_id, admin_id, "create", f"members/{user_id}")
 
+    user_member_data = {
+        "public_key": user_id,
+        "added_at": 12346000,
+        "added_by": admin_id
+    }
+    user_member_b64 = base64.b64encode(json.dumps(user_member_data).encode()).decode()
     state_store.set_state(
         channel_id,
         f"members/{user_id}",
-        {
-            "public_key": user_id,
-            "added_at": 12346000,
-            "added_by": admin_id
-        },
-        encrypted=False,
+        user_member_b64,
         updated_by=admin_id,
         updated_at=12346000
     )
@@ -77,11 +81,11 @@ def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_ke
     )
     post_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
 
+    post_cap_b64 = base64.b64encode(json.dumps(post_cap).encode()).decode()
     state_store.set_state(
         channel_id,
         f"members/{user_id}/rights/post",
-        post_cap,
-        encrypted=False,
+        post_cap_b64,
         updated_by=admin_id,
         updated_at=12346000
     )

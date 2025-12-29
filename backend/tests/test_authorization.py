@@ -2,6 +2,8 @@
 Tests for authorization engine
 """
 import pytest
+import json
+import base64
 
 
 def test_channel_creator_god_mode(authz, admin_keypair):
@@ -38,12 +40,13 @@ def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keyp
     signature = admin_private.sign(cap_message)
     capability["signature"] = crypto.base64_encode(signature)
 
-    # Store capability in state
+    # Store capability in state (as base64-encoded JSON)
+    capability_json = json.dumps(capability)
+    capability_b64 = base64.b64encode(capability_json.encode()).decode()
     state_store.set_state(
         channel_id,
         f"members/{user_id}/rights/read_all",
-        capability,
-        encrypted=False,
+        capability_b64,
         updated_by=admin_id,
         updated_at=12345000
     )
