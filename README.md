@@ -1,6 +1,8 @@
-# E2EE PubSub Messaging System
+# rEEEductio: An absurdly simple end-to-end encrypted (EEE) messaging layer
 
-A capability-based, end-to-end encrypted messaging system designed as a foundational layer for building secure applications.
+rEEEductio is an end-to-end encrypted messaging system designed as a foundational layer for building secure applications.
+
+rEEEductio is not intended to be a replacement for an app like Signal.  Instead, it's more like an encrypted pub-sub system that lets apps safely share data and save it to the cloud.
 
 ## Architecture Overview
 
