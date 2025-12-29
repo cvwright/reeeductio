@@ -5,9 +5,18 @@ Stores encrypted blobs in S3-compatible object storage (AWS S3, MinIO, etc.)
 and provides pre-signed URLs for direct client uploads/downloads.
 """
 
+import base64
 from typing import Optional
 from blob_store import BlobStore
-from identifiers import decode_identifier, IdType
+from identifiers import decode_identifier, IdType, extract_hash
+
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+except ImportError as e:
+    raise ImportError(
+        "boto3 is required for S3BlobStore. Install it with: pip install boto3"
+    ) from e
 
 
 class S3BlobStore(BlobStore):
@@ -33,14 +42,6 @@ class S3BlobStore(BlobStore):
             region_name: AWS region name (default: us-east-1)
             presigned_url_expiration: Pre-signed URL expiration in seconds (default: 3600)
         """
-        try:
-            import boto3
-            from botocore.exceptions import ClientError
-        except ImportError:
-            raise ImportError(
-                "boto3 is required for S3BlobManager. Install it with: pip install boto3"
-            )
-
         self.bucket_name = bucket_name
         self.presigned_url_expiration = presigned_url_expiration
         self.ClientError = ClientError
@@ -51,13 +52,17 @@ class S3BlobStore(BlobStore):
             session_kwargs["aws_access_key_id"] = access_key_id
             session_kwargs["aws_secret_access_key"] = secret_access_key
 
-        session = boto3.session.Session(**session_kwargs)
+        session = boto3.Session(**session_kwargs)
 
-        client_kwargs = {"region_name": region_name}
+        # Create S3 client with appropriate configuration
         if endpoint_url:
-            client_kwargs["endpoint_url"] = endpoint_url
-
-        self.s3_client = session.client("s3", **client_kwargs)
+            self.s3_client = session.client(
+                "s3",
+                region_name=region_name,
+                endpoint_url=endpoint_url
+            )
+        else:
+            self.s3_client = session.client("s3", region_name=region_name)
 
         # Ensure bucket exists
         self._ensure_bucket_exists()
@@ -195,13 +200,17 @@ class S3BlobStore(BlobStore):
 
     def get_upload_url(self, blob_id: str) -> Optional[str]:
         """
-        Get a pre-signed URL for uploading a blob to S3
+        Get a pre-signed URL for uploading a blob to S3 with SHA256 checksum enforcement
+
+        The presigned URL will require the client to provide a matching SHA256 checksum
+        when uploading, ensuring data integrity. The client must include the
+        'x-amz-checksum-sha256' header with the base64-encoded SHA256 hash.
 
         Args:
             blob_id: Content-addressed identifier for the blob
 
         Returns:
-            Pre-signed URL for PUT upload
+            Pre-signed URL for PUT upload with checksum enforcement
         """
         # Validate blob_id
         self._validate_blob_id(blob_id)
@@ -218,13 +227,18 @@ class S3BlobStore(BlobStore):
             if error_code != "404":
                 raise
 
-        # Generate pre-signed URL for PUT
+        # Extract SHA256 hash from blob_id and encode as base64 for S3
+        hash_bytes = extract_hash(blob_id)
+        checksum_sha256 = base64.b64encode(hash_bytes).decode('ascii')
+
+        # Generate pre-signed URL for PUT with checksum enforcement
         presigned_url = self.s3_client.generate_presigned_url(
             ClientMethod="put_object",
             Params={
                 "Bucket": self.bucket_name,
                 "Key": s3_key,
-                "ContentType": "application/octet-stream"
+                "ContentType": "application/octet-stream",
+                "ChecksumSHA256": checksum_sha256
             },
             ExpiresIn=self.presigned_url_expiration
         )

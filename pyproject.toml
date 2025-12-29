@@ -10,6 +10,7 @@ dependencies = [
     "pyjwt>=2.8.0",
     "cryptography>=42.0.0",
     "python-multipart>=0.0.6",
+    "boto3>=1.34.0",
 ]
 
 [project.optional-dependencies]
