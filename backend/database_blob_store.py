@@ -1,35 +1,47 @@
 """
 Database-backed blob storage implementation
 
-Stores encrypted blobs in SQLite database using the existing
-Database class infrastructure.
+Stores encrypted blobs in SQLite database.
 """
 
+import sqlite3
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
+from contextlib import contextmanager
 
 from blob_store import BlobStore
 
-if TYPE_CHECKING:
-    from database import Database
-
 
 class DatabaseBlobStore(BlobStore):
-    """Store blobs in SQLite database using shared Database connection"""
+    """Store blobs in SQLite database"""
 
-    def __init__(self, db: 'Database'):
+    def __init__(self, db_path: str):
         """
         Initialize database blob storage
 
         Args:
-            db: Database instance to use for blob operations
+            db_path: Path to SQLite database file
         """
-        self.db = db
+        self.db_path = db_path
         self._init_schema()
+
+    @contextmanager
+    def get_connection(self):
+        """Context manager for database connections"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _init_schema(self):
         """Initialize blob storage schema"""
-        with self.db.get_connection() as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
 
             # Blobs table - content-addressed binary storage
@@ -46,7 +58,7 @@ class DatabaseBlobStore(BlobStore):
 
     def add_blob(self, blob_id: str, data: bytes) -> None:
         """Store a blob in the database"""
-        with self.db.get_connection() as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO blobs
@@ -56,7 +68,7 @@ class DatabaseBlobStore(BlobStore):
 
     def get_blob(self, blob_id: str) -> Optional[bytes]:
         """Retrieve a blob from the database"""
-        with self.db.get_connection() as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT data FROM blobs WHERE blob_id = ?
@@ -67,7 +79,7 @@ class DatabaseBlobStore(BlobStore):
 
     def delete_blob(self, blob_id: str) -> bool:
         """Delete a blob from the database"""
-        with self.db.get_connection() as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 DELETE FROM blobs WHERE blob_id = ?

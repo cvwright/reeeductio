@@ -21,7 +21,7 @@ import re
 from datetime import datetime, timedelta
 import secrets
 
-from database import Database
+from sqlite_message_store import SqliteMessageStore
 from sqlite_state_store import SqliteStateStore
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
@@ -39,8 +39,8 @@ app = FastAPI(
 )
 
 # Initialize components
-db = Database("messaging.db")
-state_store = SqliteStateStore("messaging.db")
+message_store = SqliteMessageStore("messages.db")
+state_store = SqliteStateStore("state.db")
 crypto = CryptoUtils()
 authz = AuthorizationEngine(state_store, crypto)
 security = HTTPBearer()
@@ -413,7 +413,7 @@ async def get_messages(
     ):
         raise HTTPException(status_code=403, detail="No read permission for topic")
     
-    messages = db.get_messages(channel_id, topic_id, from_ts, to_ts, limit + 1)
+    messages = message_store.get_messages(channel_id, topic_id, from_ts, to_ts, limit + 1)
     
     has_more = len(messages) > limit
     if has_more:
@@ -491,7 +491,7 @@ async def post_message(
         )
 
     # Get current chain head
-    current_head = db.get_chain_head(channel_id, topic_id)
+    current_head = message_store.get_chain_head(channel_id, topic_id)
 
     # Validate prev_hash
     if current_head is None:
@@ -510,7 +510,7 @@ async def post_message(
 
     # Store message
     server_timestamp = int(time.time() * 1000)  # milliseconds
-    db.add_message(
+    message_store.add_message(
         channel_id=channel_id,
         topic_id=topic_id,
         message_hash=message.message_hash,
@@ -537,7 +537,7 @@ async def get_message_by_hash(
     if current_user["channel_id"] != channel_id:
         raise HTTPException(status_code=403, detail="Wrong channel")
     
-    message = db.get_message_by_hash(channel_id, message_hash)
+    message = message_store.get_message_by_hash(channel_id, message_hash)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
     

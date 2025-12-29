@@ -20,9 +20,9 @@ def test_state_storage(state_store):
     assert state["data"]["public_key"] == "alice_key"
 
 
-def test_message_storage(db):
+def test_message_storage(message_store):
     """Test message storage operations"""
-    db.add_message(
+    message_store.add_message(
         channel_id="channel1",
         topic_id="general",
         message_hash="hash1",
@@ -33,14 +33,14 @@ def test_message_storage(db):
         server_timestamp=12346000  # milliseconds
     )
 
-    messages = db.get_messages("channel1", "general")
+    messages = message_store.get_messages("channel1", "general")
     assert len(messages) == 1
     assert messages[0]["message_hash"] == "hash1"
 
 
-def test_chain_head_tracking(db):
+def test_chain_head_tracking(message_store):
     """Test chain head tracking"""
-    db.add_message(
+    message_store.add_message(
         channel_id="channel1",
         topic_id="general",
         message_hash="hash1",
@@ -51,13 +51,13 @@ def test_chain_head_tracking(db):
         server_timestamp=12346000
     )
 
-    head = db.get_chain_head("channel1", "general")
+    head = message_store.get_chain_head("channel1", "general")
     assert head["message_hash"] == "hash1"
 
 
-def test_time_based_queries(db):
+def test_time_based_queries(message_store):
     """Test message queries with time filters"""
-    db.add_message(
+    message_store.add_message(
         channel_id="channel1",
         topic_id="general",
         message_hash="hash1",
@@ -69,9 +69,9 @@ def test_time_based_queries(db):
     )
 
     # Query within time range
-    messages = db.get_messages("channel1", "general", from_ts=12340000, to_ts=12350000)
+    messages = message_store.get_messages("channel1", "general", from_ts=12340000, to_ts=12350000)
     assert len(messages) == 1
 
     # Query outside time range
-    messages = db.get_messages("channel1", "general", from_ts=12350000, to_ts=12360000)
+    messages = message_store.get_messages("channel1", "general", from_ts=12350000, to_ts=12360000)
     assert len(messages) == 0

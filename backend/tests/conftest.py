@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 # Add backend directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from database import Database
+from sqlite_message_store import SqliteMessageStore
 from sqlite_state_store import SqliteStateStore
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
@@ -46,9 +46,9 @@ def temp_blob_dir():
 
 
 @pytest.fixture
-def db(temp_db_path):
-    """Create a Database instance with temporary storage"""
-    return Database(temp_db_path)
+def message_store(temp_db_path):
+    """Create a SqliteMessageStore instance with temporary storage"""
+    return SqliteMessageStore(temp_db_path)
 
 
 @pytest.fixture
@@ -76,9 +76,9 @@ def fs_blob_store(temp_blob_dir):
 
 
 @pytest.fixture
-def db_blob_store(db):
+def db_blob_store(temp_db_path):
     """Create a DatabaseBlobStore instance"""
-    return DatabaseBlobStore(db)
+    return DatabaseBlobStore(temp_db_path)
 
 
 @pytest.fixture

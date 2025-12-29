@@ -6,7 +6,7 @@ import pytest
 from identifiers import decode_identifier
 
 
-def test_end_to_end_workflow(db, state_store, crypto, authz, admin_keypair, user_keypair):
+def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_keypair, user_keypair):
     """Test complete end-to-end workflow"""
     channel_id = admin_keypair['channel_id']
     admin_id = admin_keypair['user_id']
@@ -98,7 +98,7 @@ def test_end_to_end_workflow(db, state_store, crypto, authz, admin_keypair, user
     msg_tid = decode_identifier(msg_hash)
     msg_signature = user_private.sign(msg_tid.to_bytes())
 
-    db.add_message(
+    message_store.add_message(
         channel_id=channel_id,
         topic_id="general-chat",
         message_hash=msg_hash,
@@ -113,7 +113,7 @@ def test_end_to_end_workflow(db, state_store, crypto, authz, admin_keypair, user
     assert not authz.check_permission(channel_id, user_id, "write", "members/someone_else/rights/")
 
     # Retrieve and verify message
-    messages = db.get_messages(channel_id, "general-chat")
+    messages = message_store.get_messages(channel_id, "general-chat")
     assert len(messages) == 1
     assert messages[0]["message_hash"] == msg_hash
     assert messages[0]["sender"] == user_id

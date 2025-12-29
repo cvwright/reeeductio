@@ -1,24 +1,25 @@
 """
-DEPRECATED: This module has been replaced by MessageStore abstraction.
+SQLite implementation of MessageStore
 
-Message operations have been moved to MessageStore implementations (see message_store.py
-and sqlite_message_store.py). State operations were previously moved to StateStore
-implementations (see state_store.py).
-
-This file is kept for backwards compatibility but should not be used in new code.
-Use SqliteMessageStore instead.
+Stores messages in a SQLite database with blockchain-style message chains
 """
 
 import sqlite3
-import json
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
+from message_store import MessageStore
 
 
-class Database:
-    """SQLite database for storing messages"""
+class SqliteMessageStore(MessageStore):
+    """Store messages in SQLite database"""
 
     def __init__(self, db_path: str):
+        """
+        Initialize SQLite message storage
+
+        Args:
+            db_path: Path to SQLite database file
+        """
         self.db_path = db_path
         self._init_db()
 
@@ -68,10 +69,6 @@ class Database:
 
             conn.commit()
 
-    # ========================================================================
-    # Message Operations
-    # ========================================================================
-    
     def add_message(
         self,
         channel_id: str,
@@ -82,7 +79,7 @@ class Database:
         sender: str,
         signature: str,
         server_timestamp: int
-    ):
+    ) -> None:
         """Add a new message to a topic"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -95,7 +92,7 @@ class Database:
                 channel_id, topic_id, message_hash, prev_hash,
                 encrypted_payload, sender, signature, server_timestamp
             ))
-    
+
     def get_messages(
         self,
         channel_id: str,
@@ -107,7 +104,7 @@ class Database:
         """Query messages with time-based filtering"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             query = """
                 SELECT message_hash, topic_id, prev_hash,
                        encrypted_payload, sender, signature, server_timestamp
@@ -115,20 +112,20 @@ class Database:
                 WHERE channel_id = ? AND topic_id = ?
             """
             params = [channel_id, topic_id]
-            
+
             if from_ts is not None:
                 query += " AND server_timestamp >= ?"
                 params.append(from_ts)
-            
+
             if to_ts is not None:
                 query += " AND server_timestamp <= ?"
                 params.append(to_ts)
-            
+
             query += " ORDER BY server_timestamp DESC LIMIT ?"
             params.append(limit)
-            
+
             cursor.execute(query, params)
-            
+
             messages = []
             for row in cursor.fetchall():
                 messages.append({
@@ -140,11 +137,11 @@ class Database:
                     "signature": row["signature"],
                     "server_timestamp": row["server_timestamp"]
                 })
-            
+
             # Reverse to get chronological order
             messages.reverse()
             return messages
-    
+
     def get_message_by_hash(
         self,
         channel_id: str,
@@ -173,7 +170,7 @@ class Database:
                 "signature": row["signature"],
                 "server_timestamp": row["server_timestamp"]
             }
-    
+
     def get_chain_head(
         self,
         channel_id: str,
@@ -197,4 +194,3 @@ class Database:
             return {
                 "message_hash": row["message_hash"]
             }
-    
