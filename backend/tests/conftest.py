@@ -18,7 +18,7 @@ from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import encode_channel_id, encode_user_id
 from filesystem_blob_store import FilesystemBlobStore
-from database_blob_store import DatabaseBlobStore
+from sqlite_blob_store import SqliteBlobStore
 
 
 @pytest.fixture
@@ -77,8 +77,8 @@ def fs_blob_store(temp_blob_dir):
 
 @pytest.fixture
 def db_blob_store(temp_db_path):
-    """Create a DatabaseBlobStore instance"""
-    return DatabaseBlobStore(temp_db_path)
+    """Create a SqliteBlobStore instance"""
+    return SqliteBlobStore(temp_db_path)
 
 
 @pytest.fixture

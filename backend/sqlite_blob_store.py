@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from blob_store import BlobStore
 
 
-class DatabaseBlobStore(BlobStore):
+class SqliteBlobStore(BlobStore):
     """Store blobs in SQLite database"""
 
     def __init__(self, db_path: str):
