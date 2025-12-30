@@ -102,3 +102,15 @@ class LRUCache:
     def __contains__(self, key: str) -> bool:
         """Check if key is in cache."""
         return key in self._cache
+
+    def values(self):
+        """Return an iterator over cached values."""
+        return self._cache.values()
+
+    def keys(self):
+        """Return an iterator over cached keys."""
+        return self._cache.keys()
+
+    def items(self):
+        """Return an iterator over cached (key, value) pairs."""
+        return self._cache.items()

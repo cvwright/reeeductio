@@ -7,9 +7,9 @@ for cross-instance WebSocket broadcasting.
 
 import threading
 from typing import Dict, Optional
-from collections import OrderedDict
 from channel import Channel
 from blob_store import BlobStore
+from lru_cache import LRUCache
 
 
 class ChannelManager:
@@ -56,7 +56,7 @@ class ChannelManager:
         self.jwt_expiry_hours = jwt_expiry_hours
 
         # LRU cache: channel_id -> Channel instance
-        self._channels: OrderedDict[str, Channel] = OrderedDict()
+        self._channels = LRUCache(max_size=max_cached_channels)
 
         # Lock for thread-safe access
         self._lock = threading.Lock()
@@ -77,10 +77,9 @@ class ChannelManager:
         """
         with self._lock:
             # Check if channel exists in cache
-            if channel_id in self._channels:
-                # Move to end (mark as recently used)
-                self._channels.move_to_end(channel_id)
-                return self._channels[channel_id]
+            cached_channel = self._channels.get(channel_id)
+            if cached_channel is not None:
+                return cached_channel
 
             # Create new channel instance
             storage_dir = f"{self.base_storage_dir}/ch_{channel_id}"
@@ -93,14 +92,8 @@ class ChannelManager:
                 jwt_expiry_hours=self.jwt_expiry_hours
             )
 
-            # Add to cache
-            self._channels[channel_id] = channel
-
-            # Evict oldest channel if cache is full
-            if len(self._channels) > self.max_cached_channels:
-                # Remove least recently used (first item)
-                oldest_id, oldest_channel = self._channels.popitem(last=False)
-                oldest_channel.close()
+            # Add to cache (LRU will handle eviction automatically)
+            self._channels.set(channel_id, channel)
 
             return channel
 
@@ -115,8 +108,8 @@ class ChannelManager:
             True if channel was evicted, False if not in cache
         """
         with self._lock:
-            if channel_id in self._channels:
-                channel = self._channels.pop(channel_id)
+            channel = self._channels.pop(channel_id, None)
+            if channel is not None:
                 channel.close()
                 return True
             return False
@@ -168,6 +161,7 @@ class ChannelManager:
     def shutdown(self):
         """Close all channels and clear cache"""
         with self._lock:
+            # Close all channels before clearing
             for channel in self._channels.values():
                 channel.close()
             self._channels.clear()
