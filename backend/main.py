@@ -12,30 +12,18 @@ from fastapi import FastAPI, HTTPException, Depends, Header, Query, Path as Path
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Set
-import jwt
-import hashlib
+from typing import Optional, List, Dict, Any
 import time
-import json
 import re
-from datetime import datetime, timedelta
 import secrets
-import base64
-import asyncio
+import jwt
 
-from sqlite_message_store import SqliteMessageStore
-from sqlite_state_store import SqliteStateStore
 from crypto import CryptoUtils
-from authorization import AuthorizationEngine
-from identifiers import (
-    encode_channel_id, encode_user_id, encode_message_id, encode_blob_id,
-    extract_public_key, extract_hash, decode_identifier, IdType
-)
 from config import get_config
 from s3_blob_store import S3BlobStore
 from sqlite_blob_store import SqliteBlobStore
 from filesystem_blob_store import FilesystemBlobStore
-from websocket_manager import WebSocketManager
+from channel_manager import ChannelManager
 
 # Load configuration
 config = get_config()
@@ -47,11 +35,20 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# JWT configuration
+JWT_SECRET = config.server.jwt_secret or secrets.token_urlsafe(32)
+JWT_ALGORITHM = config.server.jwt_algorithm
+JWT_EXPIRY_HOURS = config.server.jwt_expiry_hours
+
 # Initialize components
-message_store = SqliteMessageStore(config.database.message_db_path)
-state_store = SqliteStateStore(config.database.state_db_path)
+channel_manager = ChannelManager(
+    base_storage_dir="channels",
+    max_cached_channels=1000,
+    jwt_secret=JWT_SECRET,
+    jwt_algorithm=JWT_ALGORITHM,
+    jwt_expiry_hours=JWT_EXPIRY_HOURS
+)
 crypto = CryptoUtils()
-authz = AuthorizationEngine(state_store, crypto)
 security = HTTPBearer()
 
 # Initialize blob store based on configuration
@@ -64,20 +61,10 @@ elif config.blob_store.type == "sqlite":
 else:
     raise ValueError(f"Unsupported blob store type: {config.blob_store.type}")
 
-# JWT configuration
-JWT_SECRET = config.server.jwt_secret or secrets.token_urlsafe(32)
-JWT_ALGORITHM = config.server.jwt_algorithm
-JWT_EXPIRY_HOURS = config.server.jwt_expiry_hours
 CHALLENGE_EXPIRY_SECONDS = config.server.challenge_expiry_seconds
 
 # Topic ID validation (slug format)
 TOPIC_ID_PATTERN = re.compile(r'^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$')
-
-# In-memory challenge storage (in production, use Redis)
-challenges: Dict[str, Dict[str, Any]] = {}
-
-# Initialize connection manager
-ws_manager = WebSocketManager()
 
 
 def validate_topic_id(topic_id: str) -> None:
@@ -87,6 +74,43 @@ def validate_topic_id(topic_id: str) -> None:
             status_code=400,
             detail="Invalid topic_id format. Must be 2-64 characters, lowercase alphanumeric with hyphens/underscores, starting and ending with alphanumeric."
         )
+
+
+def authenticate_token(token: str) -> dict:
+    """
+    Authenticate a JWT token from any channel.
+
+    This is used for global resources like blobs that aren't channel-specific.
+    Extracts channel_id from token and verifies with that channel.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        Decoded token payload
+
+    Raises:
+        HTTPException: If token is invalid or verification fails
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM]
+        )
+        channel_id = payload.get("channel_id")
+        if not channel_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing channel_id")
+
+        # Verify token with the channel (ensures it hasn't been revoked, etc.)
+        channel = channel_manager.get_channel(channel_id)
+        channel.verify_jwt(token)
+
+        return payload
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
 
 
 # ============================================================================
@@ -159,44 +183,6 @@ class ErrorResponse(BaseModel):
 
 
 # ============================================================================
-# JWT Utilities
-# ============================================================================
-
-def create_jwt(channel_id: str, public_key: str) -> dict:
-    """Create a JWT token for authenticated user"""
-    now_seconds = int(time.time())  # JWT standard uses seconds
-    expiry_seconds = now_seconds + (JWT_EXPIRY_HOURS * 3600)
-
-    payload = {
-        "channel_id": channel_id,
-        "public_key": public_key,
-        "iat": now_seconds,
-        "exp": expiry_seconds
-    }
-
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    return {"token": token, "expires_at": expiry_seconds * 1000}  # Return milliseconds for API consistency
-
-
-def verify_jwt(token: str) -> dict:
-    """Verify and decode JWT token"""
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> dict:
-    """Dependency to get current authenticated user from JWT"""
-    return verify_jwt(credentials.credentials)
-
-
-# ============================================================================
 # Authentication Endpoints
 # ============================================================================
 
@@ -206,22 +192,12 @@ async def auth_challenge(
     request: ChallengeRequest
 ):
     """Request an authentication challenge (random nonce to sign)"""
-    # Generate random challenge
-    challenge_bytes = secrets.token_bytes(32)
-    challenge = crypto.base64_encode(challenge_bytes)
+    channel = channel_manager.get_channel(channel_id)
+    result = channel.create_challenge(request.public_key, CHALLENGE_EXPIRY_SECONDS)
 
-    expires_at = int(time.time() * 1000) + (CHALLENGE_EXPIRY_SECONDS * 1000)  # milliseconds
-    
-    # Store challenge (in production, use Redis with TTL)
-    challenge_key = f"{channel_id}:{request.public_key}"
-    challenges[challenge_key] = {
-        "challenge": challenge,
-        "expires_at": expires_at
-    }
-    
     return ChallengeResponse(
-        challenge=challenge,
-        expires_at=expires_at
+        challenge=result["challenge"],
+        expires_at=result["expires_at"]
     )
 
 
@@ -231,60 +207,45 @@ async def auth_verify(
     request: VerifyRequest
 ):
     """Verify signed challenge and issue JWT token"""
-    challenge_key = f"{channel_id}:{request.public_key}"
-    
-    # Check if challenge exists and is valid
-    if challenge_key not in challenges:
-        raise HTTPException(status_code=401, detail="Challenge not found")
-    
-    stored = challenges[challenge_key]
+    channel = channel_manager.get_channel(channel_id)
 
-    if stored["expires_at"] < int(time.time() * 1000):
-        del challenges[challenge_key]
-        raise HTTPException(status_code=401, detail="Challenge expired")
-    
-    if stored["challenge"] != request.challenge:
-        raise HTTPException(status_code=401, detail="Challenge mismatch")
-    
-    # Extract public key from typed user identifier and verify signature
     try:
-        user_pubkey_bytes = extract_public_key(request.public_key)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid user identifier: {e}")
-
-    message = request.challenge.encode('utf-8')
-    if not crypto.verify_signature(
-        message,
-        crypto.base64_decode(request.signature),
-        user_pubkey_bytes
-    ):
-        raise HTTPException(status_code=401, detail="Invalid signature")
-    
-    # Check if user is a member of this channel
-    member = state_store.get_state(channel_id, f"members/{request.public_key}")
-    if not member and request.public_key != channel_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Not a member of this channel"
+        channel.verify_challenge(
+            request.public_key,
+            request.challenge,
+            request.signature
         )
-    
-    # Clean up challenge
-    del challenges[challenge_key]
-    
+    except ValueError as e:
+        # Map ValueError to appropriate HTTP status
+        error_msg = str(e)
+        if "not found" in error_msg or "expired" in error_msg or "mismatch" in error_msg:
+            raise HTTPException(status_code=401, detail=error_msg)
+        elif "Invalid" in error_msg:
+            if "identifier" in error_msg:
+                raise HTTPException(status_code=400, detail=error_msg)
+            else:
+                raise HTTPException(status_code=401, detail=error_msg)
+        elif "Not a member" in error_msg:
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
+
     # Issue JWT
-    return create_jwt(channel_id, request.public_key)
+    return channel.create_jwt(request.public_key)
 
 
 @app.post("/channels/{channel_id}/auth/refresh", response_model=TokenResponse)
 async def auth_refresh(
     channel_id: str,
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Refresh JWT token"""
-    if current_user["channel_id"] != channel_id:
-        raise HTTPException(status_code=403, detail="Token channel mismatch")
-    
-    return create_jwt(channel_id, current_user["public_key"])
+    channel = channel_manager.get_channel(channel_id)
+
+    try:
+        return channel.refresh_jwt(credentials.credentials)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
 
 
 # ============================================================================
@@ -295,26 +256,22 @@ async def auth_refresh(
 async def get_state(
     channel_id: str,
     path: str,
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Get state value from channel"""
-    if current_user["channel_id"] != channel_id:
-        raise HTTPException(status_code=403, detail="Wrong channel")
-    
-    # Check read permission
-    if not authz.check_permission(
-        channel_id,
-        current_user["public_key"],
-        "read",
-        path
-    ):
-        raise HTTPException(status_code=403, detail="No read permission")
-    
-    state = state_store.get_state(channel_id, path)
-    if state is None:
-        raise HTTPException(status_code=404, detail="State not found")
+    channel = channel_manager.get_channel(channel_id)
 
-    return StateResponse(**state)
+    try:
+        state = channel.get_state(path, credentials.credentials)
+        return StateResponse(**state)
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
 
 
 @app.put("/channels/{channel_id}/state/{path:path}")
@@ -322,96 +279,50 @@ async def put_state(
     channel_id: str,
     path: str,
     state_data: StateData,
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Set state value in channel"""
-    if current_user["channel_id"] != channel_id:
-        raise HTTPException(status_code=403, detail="Wrong channel")
-    
-    # Check if state already exists
-    existing = state_store.get_state(channel_id, path)
-    operation = "write" if existing else "create"
-    
-    # Check permission
-    if not authz.check_permission(
-        channel_id,
-        current_user["public_key"],
-        operation,
-        path
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail=f"No {operation} permission for path: {path}"
-        )
-    
-    # For sensitive paths (like capabilities), validate signature and subset
-    if authz.is_capability_path(path):
-        if not state_data.signature or not state_data.signed_by:
-            raise HTTPException(
-                status_code=400,
-                detail="Signature required for capability grants"
-            )
+    channel = channel_manager.get_channel(channel_id)
 
-        # Capability grants must be base64-encoded JSON objects
-        # Decode and parse to verify structure
-        try:
-            decoded = base64.b64decode(state_data.data)
-            capability_dict = json.loads(decoded)
-        except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Capability grants must be base64-encoded JSON objects: {e}"
-            )
-
-        # Verify the capability itself
-        if not authz.verify_capability_grant(
-            channel_id,
+    try:
+        updated_at = channel.set_state(
             path,
-            capability_dict,
-            state_data.signed_by,
-            state_data.signature
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail="Invalid capability grant or privilege escalation"
-            )
-
-    # Store state
-    now = int(time.time() * 1000)  # milliseconds
-    state_store.set_state(
-        channel_id,
-        path,
-        state_data.data,
-        current_user["public_key"],
-        now
-    )
-
-    return {"path": path, "updated_at": now}
+            state_data.data,
+            credentials.credentials,
+            state_data.signature,
+            state_data.signed_by
+        )
+        return {"path": path, "updated_at": updated_at}
+    except ValueError as e:
+        error_msg = str(e)
+        if "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        elif "required" in error_msg.lower() or "must be" in error_msg.lower():
+            raise HTTPException(status_code=400, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
 
 
 @app.delete("/channels/{channel_id}/state/{path:path}")
 async def delete_state(
     channel_id: str,
     path: str,
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Delete state value from channel"""
-    if current_user["channel_id"] != channel_id:
-        raise HTTPException(status_code=403, detail="Wrong channel")
-    
-    # Check write permission for deletion
-    if not authz.check_permission(
-        channel_id,
-        current_user["public_key"],
-        "write",
-        path
-    ):
-        raise HTTPException(status_code=403, detail="No delete permission")
-    
-    if not state_store.delete_state(channel_id, path):
-        raise HTTPException(status_code=404, detail="State not found")
+    channel = channel_manager.get_channel(channel_id)
 
-    return Response(status_code=204)
+    try:
+        channel.delete_state(path, credentials.credentials)
+        return Response(status_code=204)
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
 
 
 # ============================================================================
@@ -425,33 +336,29 @@ async def get_messages(
     from_ts: Optional[int] = Query(None, alias="from"),
     to_ts: Optional[int] = Query(None, alias="to"),
     limit: int = Query(100, ge=1, le=1000),
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Query messages in a topic with time-based filtering"""
     validate_topic_id(topic_id)
+    channel = channel_manager.get_channel(channel_id)
 
-    if current_user["channel_id"] != channel_id:
-        raise HTTPException(status_code=403, detail="Wrong channel")
-    
-    # Check read permission for topic messages
-    if not authz.check_permission(
-        channel_id,
-        current_user["public_key"],
-        "read",
-        f"topics/{topic_id}/messages/"
-    ):
-        raise HTTPException(status_code=403, detail="No read permission for topic")
-    
-    messages = message_store.get_messages(channel_id, topic_id, from_ts, to_ts, limit + 1)
-    
-    has_more = len(messages) > limit
-    if has_more:
-        messages = messages[:limit]
-    
-    return MessagesResponse(
-        messages=[Message(**msg) for msg in messages],
-        has_more=has_more
-    )
+    try:
+        messages = channel.get_messages(topic_id, credentials.credentials, from_ts, to_ts, limit + 1)
+
+        has_more = len(messages) > limit
+        if has_more:
+            messages = messages[:limit]
+
+        return MessagesResponse(
+            messages=[Message(**msg) for msg in messages],
+            has_more=has_more
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
 
 
 @app.post("/channels/{channel_id}/topics/{topic_id}/messages", status_code=201)
@@ -459,139 +366,72 @@ async def post_message(
     channel_id: str,
     topic_id: str,
     message: MessagePost,
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Post a new message to a topic"""
     validate_topic_id(topic_id)
+    channel = channel_manager.get_channel(channel_id)
 
-    if current_user["channel_id"] != channel_id:
-        raise HTTPException(status_code=403, detail="Wrong channel")
-    
-    # Check create permission
-    if not authz.check_permission(
-        channel_id,
-        current_user["public_key"],
-        "create",
-        f"topics/{topic_id}/messages/"
-    ):
-        raise HTTPException(status_code=403, detail="No post permission")
-    
-    # Sender must match authenticated user
-    sender = current_user["public_key"]
-
-    # Validate message hash (includes sender)
-    expected_hash = crypto.compute_message_hash(
-        channel_id,
-        topic_id,
-        message.prev_hash,
-        message.encrypted_payload,
-        sender
-    )
-
-    if expected_hash != message.message_hash:
-        raise HTTPException(
-            status_code=400,
-            detail="Message hash mismatch"
-        )
-
-    # Verify signature over message hash
     try:
-        signature_bytes = crypto.base64_decode(message.signature)
-        sender_bytes = extract_public_key(sender)
+        server_timestamp = channel.post_message(
+            topic_id=topic_id,
+            message_hash=message.message_hash,
+            prev_hash=message.prev_hash,
+            encrypted_payload=message.encrypted_payload,
+            signature=message.signature,
+            token=credentials.credentials
+        )
 
-        if not crypto.verify_message_signature(
-            message.message_hash,
-            signature_bytes,
-            sender_bytes
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid message signature"
-            )
+        # Broadcast to WebSocket subscribers
+        # Get user from token to include sender in broadcast
+        user = channel.authenticate_request(credentials.credentials)
+        message_dict = {
+            "message_hash": message.message_hash,
+            "topic_id": topic_id,
+            "prev_hash": message.prev_hash,
+            "encrypted_payload": message.encrypted_payload,
+            "sender": user["public_key"],
+            "signature": message.signature,
+            "server_timestamp": server_timestamp
+        }
+        await channel.broadcast_message(message_dict)
+
+        return {
+            "message_hash": message.message_hash,
+            "server_timestamp": server_timestamp
+        }
     except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid identifier: {str(e)}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Signature verification failed: {str(e)}"
-        )
-
-    # Get current chain head
-    current_head = message_store.get_chain_head(channel_id, topic_id)
-
-    # Validate prev_hash
-    if current_head is None:
-        # First message in topic
-        if message.prev_hash is not None:
-            raise HTTPException(
-                status_code=400,
-                detail="First message must have prev_hash=null"
-            )
-    else:
-        if message.prev_hash != current_head["message_hash"]:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Chain conflict: expected prev_hash={current_head['message_hash']}"
-            )
-
-    # Store message
-    server_timestamp = int(time.time() * 1000)  # milliseconds
-    message_store.add_message(
-        channel_id=channel_id,
-        topic_id=topic_id,
-        message_hash=message.message_hash,
-        prev_hash=message.prev_hash,
-        encrypted_payload=message.encrypted_payload,
-        sender=sender,
-        signature=message.signature,
-        server_timestamp=server_timestamp
-    )
-
-    # Broadcast to WebSocket subscribers
-    message_dict = {
-        "message_hash": message.message_hash,
-        "topic_id": topic_id,
-        "prev_hash": message.prev_hash,
-        "encrypted_payload": message.encrypted_payload,
-        "sender": sender,
-        "signature": message.signature,
-        "server_timestamp": server_timestamp
-    }
-    await ws_manager.broadcast_message(channel_id, message_dict)
-
-    return {
-        "message_hash": message.message_hash,
-        "server_timestamp": server_timestamp
-    }
+        error_msg = str(e)
+        if "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        elif "conflict" in error_msg.lower():
+            raise HTTPException(status_code=409, detail=error_msg)
+        elif "mismatch" in error_msg.lower() or "signature" in error_msg.lower() or "must have" in error_msg.lower():
+            raise HTTPException(status_code=400, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
 
 
 @app.get("/channels/{channel_id}/messages/{message_hash}", response_model=Message)
 async def get_message_by_hash(
     channel_id: str,
     message_hash: str,
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Get a specific message by its hash"""
-    if current_user["channel_id"] != channel_id:
-        raise HTTPException(status_code=403, detail="Wrong channel")
-    
-    message = message_store.get_message_by_hash(channel_id, message_hash)
-    if not message:
-        raise HTTPException(status_code=404, detail="Message not found")
-    
-    # Check read permission for the message's topic
-    if not authz.check_permission(
-        channel_id,
-        current_user["public_key"],
-        "read",
-        f"topics/{message['topic_id']}/messages/"
-    ):
-        raise HTTPException(status_code=403, detail="No read permission")
-    
-    return Message(**message)
+    channel = channel_manager.get_channel(channel_id)
+
+    try:
+        message = channel.get_message_by_hash(message_hash, credentials.credentials)
+        return Message(**message)
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif "permission" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=401, detail=error_msg)
 
 
 # ============================================================================
@@ -602,9 +442,12 @@ async def get_message_by_hash(
 async def upload_blob(
     blob_id: str,
     request: bytes = Depends(lambda: None),  # Will be overridden by actual request body
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Upload an encrypted blob with explicit blob_id"""
+    # Authenticate token
+    authenticate_token(credentials.credentials)
+
     # Check if blob store supports pre-signed URLs
     upload_url = blob_store.get_upload_url(blob_id)
     if upload_url:
@@ -652,9 +495,12 @@ async def upload_blob(
 @app.get("/blobs/{blob_id}")
 async def download_blob(
     blob_id: str,
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Download a blob by its ID"""
+    # Authenticate token
+    authenticate_token(credentials.credentials)
+
     # Check if blob store supports pre-signed URLs
     download_url = blob_store.get_download_url(blob_id)
     if download_url:
@@ -675,9 +521,12 @@ async def download_blob(
 @app.delete("/blobs/{blob_id}", status_code=204)
 async def delete_blob(
     blob_id: str,
-    current_user: dict = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Delete a blob"""
+    # Authenticate token
+    authenticate_token(credentials.credentials)
+
     if not blob_store.delete_blob(blob_id):
         raise HTTPException(status_code=404, detail="Blob not found")
 
@@ -693,13 +542,13 @@ async def authenticate_websocket(channel_id: str, token: Optional[str]) -> dict:
     if not token:
         raise WebSocketDisconnect(code=1008, reason="Authentication required")
 
+    channel = channel_manager.get_channel(channel_id)
+
     try:
-        payload = verify_jwt(token)
-        if payload["channel_id"] != channel_id:
-            raise WebSocketDisconnect(code=1008, reason="Token channel mismatch")
+        payload = channel.verify_jwt(token)
         return payload
-    except HTTPException as e:
-        raise WebSocketDisconnect(code=1008, reason=e.detail)
+    except ValueError as e:
+        raise WebSocketDisconnect(code=1008, reason=str(e))
 
 
 @app.websocket("/channels/{channel_id}/stream")
@@ -720,35 +569,10 @@ async def websocket_stream(
         await websocket.close(code=e.code, reason=e.reason)
         return
 
-    # Connect to the channel
-    await ws_manager.connect(channel_id, websocket)
+    channel = channel_manager.get_channel(channel_id)
 
-    try:
-        # Keep connection alive and handle incoming messages (if needed)
-        while True:
-            # Wait for any client messages (ping/pong, etc.)
-            # In this implementation, we primarily send messages to clients
-            # but we need to keep the connection open
-            try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                # Handle ping/pong or other control messages if needed
-                if data == "ping":
-                    await websocket.send_text("pong")
-            except asyncio.TimeoutError:
-                # Send periodic ping to keep connection alive
-                try:
-                    await websocket.send_text(json.dumps({"type": "ping"}))
-                except Exception:
-                    break
-            except WebSocketDisconnect:
-                break
-
-    except Exception as e:
-        # Log error if needed
-        pass
-    finally:
-        # Clean up connection
-        ws_manager.disconnect(channel_id, websocket)
+    # Handle the WebSocket connection (accept, keep-alive, broadcast, cleanup)
+    await channel.handle_websocket(websocket)
 
 
 # ============================================================================

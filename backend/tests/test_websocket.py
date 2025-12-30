@@ -13,7 +13,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from websocket_manager import WebSocketManager
-from main import app, ws_manager, authenticate_websocket, create_jwt
+from main import app, authenticate_websocket, channel_manager
 
 
 class TestWebSocketManager:
@@ -134,7 +134,8 @@ class TestWebSocketAuthentication:
     async def test_authenticate_websocket_success(self, admin_keypair):
         """Test successful WebSocket authentication"""
         channel_id = admin_keypair['channel_id']
-        jwt_data = create_jwt(channel_id, admin_keypair['user_id'])
+        channel = channel_manager.get_channel(channel_id)
+        jwt_data = channel.create_jwt(admin_keypair['user_id'])
         token = jwt_data['token']
 
         result = await authenticate_websocket(channel_id, token)
@@ -163,7 +164,8 @@ class TestWebSocketAuthentication:
     async def test_authenticate_websocket_wrong_channel(self, admin_keypair):
         """Test WebSocket authentication fails with wrong channel"""
         channel_id = admin_keypair['channel_id']
-        jwt_data = create_jwt(channel_id, admin_keypair['user_id'])
+        channel = channel_manager.get_channel(channel_id)
+        jwt_data = channel.create_jwt(admin_keypair['user_id'])
         token = jwt_data['token']
 
         with pytest.raises(WebSocketDisconnect) as exc_info:
@@ -220,7 +222,8 @@ class TestWebSocketEndpoint:
         )
 
         # Create JWT token
-        jwt_data = create_jwt(channel_id, user_id)
+        channel = channel_manager.get_channel(channel_id)
+        jwt_data = channel.create_jwt(user_id)
         token = jwt_data['token']
 
         # Connect via WebSocket
@@ -255,7 +258,8 @@ class TestWebSocketEndpoint:
         )
 
         # Create JWT token
-        jwt_data = create_jwt(channel_id, user_id)
+        channel = channel_manager.get_channel(channel_id)
+        jwt_data = channel.create_jwt(user_id)
         token = jwt_data['token']
 
         # Connect via WebSocket
@@ -274,8 +278,8 @@ class TestWebSocketEndpoint:
                 "server_timestamp": 12345000
             }
 
-            # Broadcast message
-            asyncio.run(ws_manager.broadcast_message(channel_id, message))
+            # Broadcast message via channel
+            asyncio.run(channel.broadcast_message(message))
 
             # Receive the broadcast
             data = websocket.receive_text()
@@ -340,8 +344,9 @@ class TestWebSocketMessageBroadcasting:
         ws2 = AsyncMock(spec=WebSocket)
         ws2.send_text = AsyncMock()
 
-        # Add connections to manager
-        ws_manager.active_connections[channel_id] = {ws1, ws2}
+        # Get channel and add connections directly to it
+        channel = channel_manager.get_channel(channel_id)
+        channel.websockets = {ws1, ws2}
 
         # Post a message (this should trigger broadcast)
         topic_id = "general-chat"
@@ -374,7 +379,7 @@ class TestWebSocketMessageBroadcasting:
             "signature": signature,
             "server_timestamp": 12345000
         }
-        await ws_manager.broadcast_message(channel_id, message_dict)
+        await channel.broadcast_message(message_dict)
 
         # Verify both connections received the message
         ws1.send_text.assert_called_once()

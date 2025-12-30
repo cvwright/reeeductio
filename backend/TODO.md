@@ -10,5 +10,5 @@
 10. Add or integrate OPRF service - look at https://github.com/nthparty/oprf and https://github.com/nthparty/oprfs
 11. Prep for running on AWS Lambda, Cloudflare Workers, Google serverless, etc
 12. ~~Create Dockerfile~~ ✓
-13. Think about moving each channel to use its own embedded databases - Would this be better for scaling and portability?
+13. ~~Think about moving each channel to use its own embedded databases~~  ✓
 14. ~~Require SHA256 checksum on signed url uploads~~ ✓
