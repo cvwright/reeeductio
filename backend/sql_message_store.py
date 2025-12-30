@@ -51,6 +51,10 @@ class SqlMessageStore(MessageStore):
         """
         pass
 
+    def __init__(self):
+        """Initialize the SQL message store"""
+        super().__init__()
+
     def _init_db(self):
         """Initialize database schema"""
         ph = self._get_placeholder
@@ -115,6 +119,12 @@ class SqlMessageStore(MessageStore):
                 encrypted_payload, sender, signature, server_timestamp
             ))
 
+        # Invalidate cache if present
+        if self._cache is not None:
+            # Invalidate chain head for this topic
+            chain_head_key = f"chain_head:{channel_id}:{topic_id}"
+            self._cache.pop(chain_head_key, None)
+
     def get_messages(
         self,
         channel_id: str,
@@ -178,6 +188,13 @@ class SqlMessageStore(MessageStore):
         message_hash: str
     ) -> Optional[Dict[str, Any]]:
         """Get a specific message by its hash"""
+        # Check cache if present
+        if self._cache is not None:
+            cache_key = f"message:{channel_id}:{message_hash}"
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         ph = self._get_placeholder
 
         with self.get_connection() as conn:
@@ -193,7 +210,7 @@ class SqlMessageStore(MessageStore):
             if not row:
                 return None
 
-            return {
+            result = {
                 "message_hash": row["message_hash"],
                 "topic_id": row["topic_id"],
                 "prev_hash": row["prev_hash"],
@@ -203,12 +220,26 @@ class SqlMessageStore(MessageStore):
                 "server_timestamp": row["server_timestamp"]
             }
 
+            # Store in cache if present
+            if self._cache is not None:
+                cache_key = f"message:{channel_id}:{message_hash}"
+                self._cache.set(cache_key, result)
+
+            return result
+
     def get_chain_head(
         self,
         channel_id: str,
         topic_id: str
     ) -> Optional[Dict[str, Any]]:
         """Get the most recent message in a topic (chain head)"""
+        # Check cache if present
+        if self._cache is not None:
+            cache_key = f"chain_head:{channel_id}:{topic_id}"
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         ph = self._get_placeholder
 
         with self.get_connection() as conn:
@@ -225,6 +256,13 @@ class SqlMessageStore(MessageStore):
             if not row:
                 return None
 
-            return {
+            result = {
                 "message_hash": row["message_hash"]
             }
+
+            # Store in cache if present
+            if self._cache is not None:
+                cache_key = f"chain_head:{channel_id}:{topic_id}"
+                self._cache.set(cache_key, result)
+
+            return result

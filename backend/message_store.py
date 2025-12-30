@@ -7,10 +7,23 @@ storing messages in different backends (SQLite, PostgreSQL, etc.)
 
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any
+from lru_cache import LRUCache
 
 
 class MessageStore(ABC):
     """Abstract base class for message storage backends"""
+
+    def __init__(self):
+        """
+        Initialize the message store.
+
+        Subclasses should call super().__init__() and optionally initialize
+        the cache for local storage backends.
+        """
+        # Optional cache for local storage backends (SQLite)
+        # Remote storage backends (PostgreSQL, MySQL) should leave this as None
+        # to avoid cache coherency issues across multiple application instances
+        self._cache: Optional[LRUCache] = None
 
     @abstractmethod
     def add_message(
