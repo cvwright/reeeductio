@@ -103,30 +103,6 @@ class S3BlobStore(BlobStore):
         """
         return f"blobs/{blob_id}.meta"
 
-    def _get_reference_key(self, channel_id: str, uploaded_by: str) -> str:
-        """Generate a unique key for a reference"""
-        return f"{channel_id}:{uploaded_by}"
-
-    def _validate_blob_id(self, blob_id: str) -> None:
-        """
-        Validate that blob_id is a valid typed identifier of BLOB type
-
-        Args:
-            blob_id: Content-addressed identifier to validate
-
-        Raises:
-            ValueError: If blob_id is invalid or not a BLOB type
-        """
-        try:
-            tid = decode_identifier(blob_id)
-        except (ValueError, KeyError) as e:
-            raise ValueError(f"Invalid blob_id format: {e}")
-
-        if tid.id_type != IdType.BLOB:
-            raise ValueError(
-                f"blob_id must be BLOB type, got {tid.id_type.name}"
-            )
-
     def add_blob(self, blob_id: str, data: bytes, channel_id: str, uploaded_by: str) -> None:
         """
         Store a blob with reference counting.
