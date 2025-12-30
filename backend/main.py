@@ -8,11 +8,11 @@ A capability-based, end-to-end encrypted messaging system with:
 - Zero-knowledge server design
 """
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query, Path as PathParam
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, Path as PathParam, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 import jwt
 import hashlib
 import time
@@ -21,6 +21,7 @@ import re
 from datetime import datetime, timedelta
 import secrets
 import base64
+import asyncio
 
 from sqlite_message_store import SqliteMessageStore
 from sqlite_state_store import SqliteStateStore
@@ -31,6 +32,7 @@ from identifiers import (
     extract_public_key, extract_hash, decode_identifier, IdType
 )
 from filesystem_blob_store import FilesystemBlobStore
+from websocket_manager import WebSocketManager
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -58,6 +60,9 @@ TOPIC_ID_PATTERN = re.compile(r'^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$')
 
 # In-memory challenge storage (in production, use Redis)
 challenges: Dict[str, Dict[str, Any]] = {}
+
+# Initialize connection manager
+ws_manager = WebSocketManager()
 
 
 def validate_topic_id(topic_id: str) -> None:
@@ -144,18 +149,18 @@ class ErrorResponse(BaseModel):
 
 def create_jwt(channel_id: str, public_key: str) -> dict:
     """Create a JWT token for authenticated user"""
-    now = int(time.time() * 1000)  # milliseconds
-    expiry = now + (JWT_EXPIRY_HOURS * 3600 * 1000)  # milliseconds
-    
+    now_seconds = int(time.time())  # JWT standard uses seconds
+    expiry_seconds = now_seconds + (JWT_EXPIRY_HOURS * 3600)
+
     payload = {
         "channel_id": channel_id,
         "public_key": public_key,
-        "iat": now,
-        "exp": expiry
+        "iat": now_seconds,
+        "exp": expiry_seconds
     }
-    
+
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    return {"token": token, "expires_at": expiry}
+    return {"token": token, "expires_at": expiry_seconds * 1000}  # Return milliseconds for API consistency
 
 
 def verify_jwt(token: str) -> dict:
@@ -530,6 +535,18 @@ async def post_message(
         server_timestamp=server_timestamp
     )
 
+    # Broadcast to WebSocket subscribers
+    message_dict = {
+        "message_hash": message.message_hash,
+        "topic_id": topic_id,
+        "prev_hash": message.prev_hash,
+        "encrypted_payload": message.encrypted_payload,
+        "sender": sender,
+        "signature": message.signature,
+        "server_timestamp": server_timestamp
+    }
+    await ws_manager.broadcast_message(channel_id, message_dict)
+
     return {
         "message_hash": message.message_hash,
         "server_timestamp": server_timestamp
@@ -650,6 +667,73 @@ async def delete_blob(
         raise HTTPException(status_code=404, detail="Blob not found")
 
     return Response(status_code=204)
+
+
+# ============================================================================
+# WebSocket Endpoint
+# ============================================================================
+
+async def authenticate_websocket(channel_id: str, token: Optional[str]) -> dict:
+    """Authenticate WebSocket connection using JWT token"""
+    if not token:
+        raise WebSocketDisconnect(code=1008, reason="Authentication required")
+
+    try:
+        payload = verify_jwt(token)
+        if payload["channel_id"] != channel_id:
+            raise WebSocketDisconnect(code=1008, reason="Token channel mismatch")
+        return payload
+    except HTTPException as e:
+        raise WebSocketDisconnect(code=1008, reason=e.detail)
+
+
+@app.websocket("/channels/{channel_id}/stream")
+async def websocket_stream(
+    websocket: WebSocket,
+    channel_id: str,
+    token: Optional[str] = Query(None)
+):
+    """
+    WebSocket endpoint for streaming real-time messages from a channel.
+
+    Authentication: Provide JWT token via query parameter ?token=<jwt>
+    """
+    # Authenticate the connection
+    try:
+        current_user = await authenticate_websocket(channel_id, token)
+    except WebSocketDisconnect as e:
+        await websocket.close(code=e.code, reason=e.reason)
+        return
+
+    # Connect to the channel
+    await ws_manager.connect(channel_id, websocket)
+
+    try:
+        # Keep connection alive and handle incoming messages (if needed)
+        while True:
+            # Wait for any client messages (ping/pong, etc.)
+            # In this implementation, we primarily send messages to clients
+            # but we need to keep the connection open
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                # Handle ping/pong or other control messages if needed
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                # Send periodic ping to keep connection alive
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping"}))
+                except Exception:
+                    break
+            except WebSocketDisconnect:
+                break
+
+    except Exception as e:
+        # Log error if needed
+        pass
+    finally:
+        # Clean up connection
+        ws_manager.disconnect(channel_id, websocket)
 
 
 # ============================================================================

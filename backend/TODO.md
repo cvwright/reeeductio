@@ -4,7 +4,7 @@
 4. Create LmdbStateStore using LMDB
 5. Create a more generic SqlStateStore that can be a parent of SqliteStateStore, for future postgres or mysql support
 6. Create a more generic SqlMessageStore that can be a parent of SqliteMessageStore, for future postgres or mysql support
-7. Add support for websocket on /channel/{channel_id}/stream
+7. ~~Add support for websocket on /channel/{channel_id}/stream~~ ✓
 8. Add support for loading config from a file and/or environment variables
 9. Investigate adding caching for state and messages - look at functools, or write our own with a dictionary for easier manual update/invalidation
 10. Add or integrate OPRF service - look at https://github.com/nthparty/oprf and https://github.com/nthparty/oprfs

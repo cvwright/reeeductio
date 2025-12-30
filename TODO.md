@@ -6,3 +6,4 @@
    - Maybe config has a master public key that defines an admin channel/queue that contains all the other authorizations ???
 5. Figure out a plan for /login
    - Maybe this uses a special queue too, with public key given in the config
+6. ~~Add spec for websocket on /channel/{channel_id}/stream~~ ✓
