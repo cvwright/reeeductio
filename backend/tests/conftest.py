@@ -81,6 +81,20 @@ def db_blob_store(temp_db_path):
     return SqliteBlobStore(temp_db_path)
 
 
+@pytest.fixture(params=['filesystem', 'sqlite'])
+def any_blob_store(request, temp_blob_dir, temp_db_path):
+    """
+    Parametrized fixture that provides all blob store implementations.
+    Tests using this fixture will run once for each blob store type.
+    """
+    if request.param == 'filesystem':
+        return FilesystemBlobStore(temp_blob_dir)
+    elif request.param == 'sqlite':
+        return SqliteBlobStore(temp_db_path)
+    else:
+        raise ValueError(f"Unknown blob store type: {request.param}")
+
+
 @pytest.fixture
 def admin_keypair():
     """Generate an admin keypair for testing"""

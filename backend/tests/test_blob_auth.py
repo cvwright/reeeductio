@@ -19,7 +19,7 @@ import pytest
 # Add backend directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from blob_store import BlobMetadata, BlobReference
+from blob_store import BlobMetadata, BlobReference, BlobStore
 from filesystem_blob_store import FilesystemBlobStore
 from sqlite_blob_store import SqliteBlobStore
 from channel import Channel
@@ -71,92 +71,93 @@ class TestBlobMetadata:
 # Blob Store Authorization Tests
 # ============================================================================
 
+def generic_store_metadata(blob_store: BlobStore, channel_id: str, user_id: str):
+    """Generic test that blob store stores and retrieves metadata with references"""
+    blob_data = b"encrypted blob content"
+    blob_id = CryptoUtils.compute_blob_id(blob_data)
+
+    # Add blob with metadata
+    blob_store.add_blob(blob_id, blob_data, channel_id, user_id)
+
+    # Retrieve metadata
+    metadata = blob_store.get_blob_metadata(blob_id)
+    assert metadata is not None
+    assert len(metadata.references) == 1
+    assert metadata.has_reference(channel_id)
+    ref = metadata.get_reference(channel_id, user_id)
+    assert ref is not None
+    assert ref.channel_id == channel_id
+    assert ref.uploaded_by == user_id
+    assert ref.uploaded_at > 0
+
+
+def generic_metadata_persists_after_retrieval(blob_store: BlobStore):
+    """Generic test that metadata persists after blob retrieval"""
+    blob_data = b"test content"
+    blob_id = CryptoUtils.compute_blob_id(blob_data)
+    channel_id = "persist_channel"
+    user_id = "persist_user"
+
+    # Add blob
+    blob_store.add_blob(blob_id, blob_data, channel_id, user_id)
+
+    # Get blob content
+    retrieved_data = blob_store.get_blob(blob_id)
+    assert retrieved_data == blob_data
+
+    # Metadata should still be accessible
+    metadata = blob_store.get_blob_metadata(blob_id)
+    assert metadata is not None
+    assert metadata.has_reference(channel_id)
+
+
+def generic_metadata_deleted_with_blob(blob_store: BlobStore):
+    """Generic test that metadata is deleted when last reference is removed"""
+    blob_data = b"temporary content"
+    blob_id = CryptoUtils.compute_blob_id(blob_data)
+    channel_id = "temp_channel"
+    user_id = "temp_user"
+
+    # Add and remove blob reference
+    blob_store.add_blob(blob_id, blob_data, channel_id, user_id)
+    blob_deleted = blob_store.remove_blob_reference(blob_id, channel_id, user_id)
+
+    # Should have deleted blob content since no references remain
+    assert blob_deleted is True
+    assert blob_store.get_blob(blob_id) is None
+    assert blob_store.get_blob_metadata(blob_id) is None
+
+
+def generic_nonexistent_blob_metadata(blob_store: BlobStore):
+    """Generic test for getting metadata for non-existent blob returns None"""
+    fake_data = b"nonexistent"
+    fake_blob_id = CryptoUtils.compute_blob_id(fake_data)
+    metadata = blob_store.get_blob_metadata(fake_blob_id)
+    assert metadata is None
+
+
 class TestBlobStoreWithMetadata:
     """Test blob stores properly handle metadata"""
 
     def test_filesystem_store_metadata(self, fs_blob_store):
         """Test FilesystemBlobStore stores and retrieves metadata with references"""
-        blob_data = b"encrypted blob content"
-        blob_id = CryptoUtils.compute_blob_id(blob_data)
-        channel_id = "channel_123"
-        user_id = "user_abc"
-
-        # Add blob with metadata
-        fs_blob_store.add_blob(blob_id, blob_data, channel_id, user_id)
-
-        # Retrieve metadata
-        metadata = fs_blob_store.get_blob_metadata(blob_id)
-        assert metadata is not None
-        assert len(metadata.references) == 1
-        assert metadata.has_reference(channel_id)
-        ref = metadata.get_reference(channel_id, user_id)
-        assert ref is not None
-        assert ref.channel_id == channel_id
-        assert ref.uploaded_by == user_id
-        assert ref.uploaded_at > 0
+        generic_store_metadata(fs_blob_store, "channel_123", "user_abc")
 
     def test_sqlite_store_metadata(self, db_blob_store):
         """Test SqliteBlobStore stores and retrieves metadata with references"""
-        blob_data = b"encrypted blob content"
-        blob_id = CryptoUtils.compute_blob_id(blob_data)
-        channel_id = "channel_456"
-        user_id = "user_xyz"
-
-        # Add blob with metadata
-        db_blob_store.add_blob(blob_id, blob_data, channel_id, user_id)
-
-        # Retrieve metadata
-        metadata = db_blob_store.get_blob_metadata(blob_id)
-        assert metadata is not None
-        assert len(metadata.references) == 1
-        assert metadata.has_reference(channel_id)
-        ref = metadata.get_reference(channel_id, user_id)
-        assert ref is not None
-        assert ref.channel_id == channel_id
-        assert ref.uploaded_by == user_id
-        assert ref.uploaded_at > 0
+        generic_store_metadata(db_blob_store, "channel_456", "user_xyz")
 
     def test_metadata_persists_after_retrieval(self, fs_blob_store):
         """Test metadata persists after blob retrieval"""
-        blob_data = b"test content"
-        blob_id = CryptoUtils.compute_blob_id(blob_data)
-        channel_id = "persist_channel"
-        user_id = "persist_user"
-
-        # Add blob
-        fs_blob_store.add_blob(blob_id, blob_data, channel_id, user_id)
-
-        # Get blob content
-        retrieved_data = fs_blob_store.get_blob(blob_id)
-        assert retrieved_data == blob_data
-
-        # Metadata should still be accessible
-        metadata = fs_blob_store.get_blob_metadata(blob_id)
-        assert metadata is not None
-        assert metadata.has_reference(channel_id)
+        generic_metadata_persists_after_retrieval(fs_blob_store)
 
     def test_metadata_deleted_with_blob(self, fs_blob_store):
         """Test metadata is deleted when last reference is removed"""
-        blob_data = b"temporary content"
-        blob_id = CryptoUtils.compute_blob_id(blob_data)
-        channel_id = "temp_channel"
-        user_id = "temp_user"
-
-        # Add and remove blob reference
-        fs_blob_store.add_blob(blob_id, blob_data, channel_id, user_id)
-        blob_deleted = fs_blob_store.remove_blob_reference(blob_id, channel_id, user_id)
-
-        # Should have deleted blob content since no references remain
-        assert blob_deleted is True
-        assert fs_blob_store.get_blob(blob_id) is None
-        assert fs_blob_store.get_blob_metadata(blob_id) is None
+        generic_metadata_deleted_with_blob(fs_blob_store)
 
     def test_nonexistent_blob_metadata(self, fs_blob_store):
         """Test getting metadata for non-existent blob returns None"""
-        fake_data = b"nonexistent"
-        fake_blob_id = CryptoUtils.compute_blob_id(fake_data)
-        metadata = fs_blob_store.get_blob_metadata(fake_blob_id)
-        assert metadata is None
+        generic_nonexistent_blob_metadata(fs_blob_store)
 
 
 # ============================================================================
@@ -368,13 +369,12 @@ class TestBlobAuthorizationIntegration:
     """Integration tests for complete blob authorization flow"""
 
     @pytest.fixture
-    def setup(self, temp_db_path, temp_blob_dir, admin_keypair, user_keypair):
+    def setup(self, temp_db_path, admin_keypair, user_keypair, any_blob_store):
         """Setup complete environment with channel, blob store, and users"""
         # Create channel
         channel_id = admin_keypair['channel_id']
         state_store = SqliteStateStore(temp_db_path + "_state")
         message_store = SqliteMessageStore(temp_db_path + "_msg")
-        blob_store = FilesystemBlobStore(temp_blob_dir)
 
         channel = Channel(
             channel_id=channel_id,
@@ -397,7 +397,7 @@ class TestBlobAuthorizationIntegration:
 
         return {
             'channel': channel,
-            'blob_store': blob_store,
+            'blob_store': any_blob_store,
             'admin': admin_keypair,
             'user': user_keypair
         }
@@ -460,7 +460,7 @@ class TestBlobAuthorizationIntegration:
         assert blob_deleted is True
         assert blob_store.get_blob(blob_id) is None
 
-    def test_cross_channel_access_prevented(self, temp_db_path, temp_blob_dir, admin_keypair, user_keypair):
+    def test_cross_channel_access_prevented(self, temp_db_path, admin_keypair, user_keypair, any_blob_store):
         """Test users from one channel cannot access blobs from another"""
         # Create two separate channels
         from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -494,7 +494,7 @@ class TestBlobAuthorizationIntegration:
         )
 
         # Upload blob to channel1
-        blob_store = FilesystemBlobStore(temp_blob_dir)
+        blob_store = any_blob_store
         blob_data = b"channel1 data"
         blob_id = CryptoUtils.compute_blob_id(blob_data)
 
@@ -510,7 +510,7 @@ class TestBlobAuthorizationIntegration:
         with pytest.raises(ValueError, match="different channel"):
             channel2.authorize_blob_download(channel2_id, token2['token'], metadata)
 
-    def test_blob_deduplication_across_channels(self, temp_db_path, temp_blob_dir, admin_keypair):
+    def test_blob_deduplication_across_channels(self, temp_db_path, admin_keypair, any_blob_store):
         """Test blob deduplication when multiple channels upload same content"""
         from cryptography.hazmat.primitives.asymmetric import ed25519
         from identifiers import encode_channel_id
@@ -543,7 +543,7 @@ class TestBlobAuthorizationIntegration:
         # Same blob content
         blob_data = b"shared content across channels"
         blob_id = CryptoUtils.compute_blob_id(blob_data)
-        blob_store = FilesystemBlobStore(temp_blob_dir)
+        blob_store = any_blob_store
 
         # Channel 1 uploads blob
         token1 = channel1.create_jwt(channel1_id)

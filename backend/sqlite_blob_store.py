@@ -10,6 +10,7 @@ from typing import Optional
 from contextlib import contextmanager
 
 from blob_store import BlobStore, BlobMetadata, BlobReference
+from identifiers import decode_identifier, IdType
 
 
 class SqliteBlobStore(BlobStore):
@@ -78,31 +79,66 @@ class SqliteBlobStore(BlobStore):
 
             conn.commit()
 
+    def _validate_blob_id(self, blob_id: str) -> None:
+        """
+        Validate that blob_id is a valid typed identifier of BLOB type
+
+        Args:
+            blob_id: Content-addressed identifier to validate
+
+        Raises:
+            ValueError: If blob_id is invalid or not a BLOB type
+        """
+        try:
+            tid = decode_identifier(blob_id)
+        except (ValueError, KeyError) as e:
+            raise ValueError(f"Invalid blob_id format: {e}")
+
+        if tid.id_type != IdType.BLOB:
+            raise ValueError(
+                f"blob_id must be BLOB type, got {tid.id_type.name}"
+            )
+
     def add_blob(self, blob_id: str, data: bytes, channel_id: str, uploaded_by: str) -> None:
         """
         Store a blob with reference counting.
         Only writes content if blob doesn't exist, but always adds reference.
+
+        Raises:
+            ValueError: If blob_id is invalid or not a BLOB type
+            FileExistsError: If this exact reference already exists
         """
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+        # Validate blob_id format and type
+        self._validate_blob_id(blob_id)
 
-            # Check if blob content already exists
-            cursor.execute("SELECT blob_id FROM blobs WHERE blob_id = ?", (blob_id,))
-            blob_exists = cursor.fetchone() is not None
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
 
-            # Only write content if it doesn't exist
-            if not blob_exists:
+                # Check if blob content already exists
+                cursor.execute("SELECT blob_id FROM blobs WHERE blob_id = ?", (blob_id,))
+                blob_exists = cursor.fetchone() is not None
+
+                # Only write content if it doesn't exist
+                if not blob_exists:
+                    cursor.execute("""
+                        INSERT INTO blobs (blob_id, data, size)
+                        VALUES (?, ?, ?)
+                    """, (blob_id, data, len(data)))
+
+                # Always add the reference (will fail if duplicate)
                 cursor.execute("""
-                    INSERT INTO blobs (blob_id, data, size)
-                    VALUES (?, ?, ?)
-                """, (blob_id, data, len(data)))
-
-            # Always add the reference (will fail if duplicate)
-            cursor.execute("""
-                INSERT INTO blob_references
-                (blob_id, channel_id, uploaded_by, uploaded_at)
-                VALUES (?, ?, ?, ?)
-            """, (blob_id, channel_id, uploaded_by, int(time.time() * 1000)))
+                    INSERT INTO blob_references
+                    (blob_id, channel_id, uploaded_by, uploaded_at)
+                    VALUES (?, ?, ?, ?)
+                """, (blob_id, channel_id, uploaded_by, int(time.time() * 1000)))
+        except sqlite3.IntegrityError as e:
+            # Convert SQLite UNIQUE constraint error to FileExistsError
+            if "UNIQUE constraint failed" in str(e):
+                raise FileExistsError(
+                    f"Blob {blob_id} already has reference from {channel_id}/{uploaded_by}"
+                )
+            raise
 
     def get_blob(self, blob_id: str) -> Optional[bytes]:
         """Retrieve a blob from the database"""
