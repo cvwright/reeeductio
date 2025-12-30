@@ -409,7 +409,7 @@ class Channel:
     # Message Operations
     # ========================================================================
 
-    def post_message(
+    async def post_message(
         self,
         topic_id: str,
         message_hash: str,
@@ -420,6 +420,8 @@ class Channel:
     ) -> int:
         """
         Post a message to a topic with authentication and validation.
+
+        Stores the message and broadcasts it to all connected WebSocket clients.
 
         Args:
             topic_id: Topic identifier
@@ -477,6 +479,18 @@ class Channel:
             signature=signature,
             server_timestamp=server_timestamp
         )
+
+        # Broadcast to WebSocket subscribers
+        message_dict = {
+            "message_hash": message_hash,
+            "topic_id": topic_id,
+            "prev_hash": prev_hash,
+            "encrypted_payload": encrypted_payload,
+            "sender": sender,
+            "signature": signature,
+            "server_timestamp": server_timestamp
+        }
+        await self.broadcast_message(message_dict)
 
         return server_timestamp
 

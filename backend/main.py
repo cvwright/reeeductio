@@ -373,7 +373,7 @@ async def post_message(
     channel = channel_manager.get_channel(channel_id)
 
     try:
-        server_timestamp = channel.post_message(
+        server_timestamp = await channel.post_message(
             topic_id=topic_id,
             message_hash=message.message_hash,
             prev_hash=message.prev_hash,
@@ -381,20 +381,6 @@ async def post_message(
             signature=message.signature,
             token=credentials.credentials
         )
-
-        # Broadcast to WebSocket subscribers
-        # Get user from token to include sender in broadcast
-        user = channel.authenticate_request(credentials.credentials)
-        message_dict = {
-            "message_hash": message.message_hash,
-            "topic_id": topic_id,
-            "prev_hash": message.prev_hash,
-            "encrypted_payload": message.encrypted_payload,
-            "sender": user["public_key"],
-            "signature": message.signature,
-            "server_timestamp": server_timestamp
-        }
-        await channel.broadcast_message(message_dict)
 
         return {
             "message_hash": message.message_hash,
