@@ -7,7 +7,7 @@ management and placeholder formatting.
 """
 
 from abc import abstractmethod
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, ContextManager
 from contextlib import contextmanager
 from message_store import MessageStore
 
@@ -24,8 +24,7 @@ class SqlMessageStore(MessageStore):
     """
 
     @abstractmethod
-    @contextmanager
-    def get_connection(self):
+    def get_connection(self) -> ContextManager[Any]:
         """
         Context manager for database connections
 
@@ -33,6 +32,8 @@ class SqlMessageStore(MessageStore):
         - Supports cursor() method
         - Supports commit() and rollback()
         - Has a row_factory that returns dict-like rows
+
+        Implementations should use @contextmanager decorator.
         """
         pass
 
