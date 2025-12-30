@@ -31,8 +31,14 @@ from identifiers import (
     encode_channel_id, encode_user_id, encode_message_id, encode_blob_id,
     extract_public_key, extract_hash, decode_identifier, IdType
 )
+from config import get_config
+from s3_blob_store import S3BlobStore
+from sqlite_blob_store import SqliteBlobStore
 from filesystem_blob_store import FilesystemBlobStore
 from websocket_manager import WebSocketManager
+
+# Load configuration
+config = get_config()
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -42,18 +48,34 @@ app = FastAPI(
 )
 
 # Initialize components
-message_store = SqliteMessageStore("messages.db")
-state_store = SqliteStateStore("state.db")
+message_store = SqliteMessageStore(config.database.message_db_path)
+state_store = SqliteStateStore(config.database.state_db_path)
 crypto = CryptoUtils()
 authz = AuthorizationEngine(state_store, crypto)
 security = HTTPBearer()
-blob_store = FilesystemBlobStore("blobs")
+
+# Initialize blob store based on configuration
+if config.blob_store.type == "filesystem":
+    blob_store = FilesystemBlobStore(config.blob_store.filesystem_path)
+elif config.blob_store.type == "s3":
+    blob_store = S3BlobStore(
+        bucket_name=config.blob_store.s3_bucket_name,
+        endpoint_url=config.blob_store.s3_endpoint_url,
+        access_key_id=config.blob_store.s3_access_key_id,
+        secret_access_key=config.blob_store.s3_secret_access_key,
+        region_name=config.blob_store.s3_region_name,
+        presigned_url_expiration=config.blob_store.s3_presigned_url_expiration
+    )
+elif config.blob_store.type == "sqlite":
+    blob_store = SqliteBlobStore(config.blob_store.sqlite_db_path)
+else:
+    raise ValueError(f"Unsupported blob store type: {config.blob_store.type}")
 
 # JWT configuration
-JWT_SECRET = secrets.token_urlsafe(32)  # In production, load from environment
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 24
-CHALLENGE_EXPIRY_SECONDS = 300  # 5 minutes
+JWT_SECRET = config.server.jwt_secret or secrets.token_urlsafe(32)
+JWT_ALGORITHM = config.server.jwt_algorithm
+JWT_EXPIRY_HOURS = config.server.jwt_expiry_hours
+CHALLENGE_EXPIRY_SECONDS = config.server.challenge_expiry_seconds
 
 # Topic ID validation (slug format)
 TOPIC_ID_PATTERN = re.compile(r'^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$')
@@ -748,4 +770,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=config.server.host, port=config.server.port)
