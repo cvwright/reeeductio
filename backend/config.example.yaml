@@ -1,0 +1,50 @@
+# Example configuration file for the E2EE PubSub messaging backend
+# Copy this file to config/config.yaml and modify as needed
+
+# Server configuration
+server:
+  host: 0.0.0.0
+  port: 8000
+
+  # JWT configuration (optional - will be generated if not provided)
+  # jwt_secret: your-secret-key-here
+  jwt_algorithm: HS256
+  jwt_expiry_hours: 24
+  challenge_expiry_seconds: 300
+
+# Database configuration
+database:
+  # Path to SQLite database for state storage
+  state_db_path: /data/state.db
+
+  # Path to SQLite database for message storage
+  message_db_path: /data/messages.db
+
+# Blob storage configuration
+# Choose one of: filesystem, s3, or sqlite
+
+# Option 1: Filesystem storage (default)
+blob_store:
+  type: filesystem
+  path: /data/blobs
+
+# Option 2: S3 storage
+# blob_store:
+#   type: s3
+#   bucket_name: my-bucket-name
+#   region_name: us-east-1
+#   # Optional: AWS credentials (uses IAM role if not provided)
+#   # access_key_id: your-access-key
+#   # secret_access_key: your-secret-key
+#   # Optional: Custom endpoint for MinIO or other S3-compatible storage
+#   # endpoint_url: https://minio.example.com
+#   presigned_url_expiration: 3600
+
+# Option 3: SQLite blob storage
+# blob_store:
+#   type: sqlite
+#   db_path: /data/blobs.db
+
+# Application settings
+environment: production  # development, production, or test
+debug: false
