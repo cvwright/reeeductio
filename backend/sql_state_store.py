@@ -1,0 +1,207 @@
+"""
+SQL-based implementation of StateStore
+
+Provides a common base class for SQL database implementations (SQLite, PostgreSQL, MySQL)
+with database-agnostic SQL queries. Concrete classes only need to implement connection
+management and placeholder formatting.
+"""
+
+from abc import abstractmethod
+from typing import Optional, List, Dict, Any, Union, ContextManager
+from contextlib import contextmanager
+from state_store import StateStore
+
+
+class SqlStateStore(StateStore):
+    """
+    Abstract SQL-based state store
+
+    Implements all SQL logic using standard SQL syntax. Subclasses only need to:
+    1. Implement __init__() with database-specific connection setup
+    2. Implement get_connection() for database-specific connections
+    3. Implement _get_placeholder() to return the appropriate parameter placeholder
+    4. Optionally override _init_db() for database-specific schema tweaks
+    """
+
+    @abstractmethod
+    def get_connection(self) -> ContextManager[Any]:
+        """
+        Context manager for database connections
+
+        Must yield a connection object that:
+        - Supports cursor() method
+        - Supports commit() and rollback()
+        - Has a row_factory that returns dict-like rows
+
+        Implementations should use @contextmanager decorator.
+        """
+        pass
+
+    @abstractmethod
+    def _get_placeholder(self, position: int = 0) -> str:
+        """
+        Get the parameter placeholder for this database
+
+        Args:
+            position: Parameter position (0-indexed), used for PostgreSQL $1, $2, etc.
+
+        Returns:
+            - SQLite: "?"
+            - PostgreSQL: "$1", "$2", etc.
+            - MySQL: "%s"
+        """
+        pass
+
+    def __init__(self):
+        """Initialize the SQL state store"""
+        super().__init__()
+
+    def _init_db(self):
+        """Initialize database schema"""
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # State table - stores all channel state (members, capabilities, metadata)
+            # Data is always stored as base64 string; interpretation is context-dependent
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS state (
+                    channel_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    data TEXT NOT NULL,
+                    updated_by TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (channel_id, path)
+                )
+            """)
+
+            # Create index for faster state queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_state_channel
+                ON state(channel_id)
+            """)
+
+            conn.commit()
+
+    def get_state(
+        self,
+        channel_id: str,
+        path: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get state value by path (data is always returned as base64 string)"""
+        # Check cache if present
+        if self._cache is not None:
+            cache_key = f"state:{channel_id}:{path}"
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT data, updated_by, updated_at
+                FROM state
+                WHERE channel_id = {ph(0)} AND path = {ph(1)}
+            """, (channel_id, path))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            result = {
+                "data": row["data"],
+                "updated_by": row["updated_by"],
+                "updated_at": row["updated_at"]
+            }
+
+            # Store in cache if present
+            if self._cache is not None:
+                cache_key = f"state:{channel_id}:{path}"
+                self._cache.set(cache_key, result)
+
+            return result
+
+    def set_state(
+        self,
+        channel_id: str,
+        path: str,
+        data: str,
+        updated_by: str,
+        updated_at: int
+    ) -> None:
+        """Set state value (data should be base64-encoded string)"""
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Try to update first
+            cursor.execute(f"""
+                UPDATE state
+                SET data = {ph(2)}, updated_by = {ph(3)}, updated_at = {ph(4)}
+                WHERE channel_id = {ph(0)} AND path = {ph(1)}
+            """, (channel_id, path, data, updated_by, updated_at))
+
+            # If no rows were updated, insert a new row
+            if cursor.rowcount == 0:
+                placeholders = ", ".join([ph(i) for i in range(5)])
+                cursor.execute(f"""
+                    INSERT INTO state
+                    (channel_id, path, data, updated_by, updated_at)
+                    VALUES ({placeholders})
+                """, (channel_id, path, data, updated_by, updated_at))
+
+        # Invalidate cache if present
+        if self._cache is not None:
+            cache_key = f"state:{channel_id}:{path}"
+            self._cache.pop(cache_key, None)
+
+    def delete_state(self, channel_id: str, path: str) -> bool:
+        """Delete state value"""
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                DELETE FROM state
+                WHERE channel_id = {ph(0)} AND path = {ph(1)}
+            """, (channel_id, path))
+            deleted = cursor.rowcount > 0
+
+        # Invalidate cache if present
+        if self._cache is not None:
+            cache_key = f"state:{channel_id}:{path}"
+            self._cache.pop(cache_key, None)
+
+        return deleted
+
+    def list_state(
+        self,
+        channel_id: str,
+        prefix: str
+    ) -> List[Dict[str, Any]]:
+        """List all state entries matching a prefix (data is always base64 string)"""
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT path, data, updated_by, updated_at
+                FROM state
+                WHERE channel_id = {ph(0)} AND path LIKE {ph(1)}
+                ORDER BY path
+            """, (channel_id, f"{prefix}%"))
+
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    "path": row["path"],
+                    "data": row["data"],
+                    "updated_by": row["updated_by"],
+                    "updated_at": row["updated_at"]
+                })
+
+            return results

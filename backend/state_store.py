@@ -40,8 +40,7 @@ class StateStore(ABC):
 
         Returns:
             Dictionary containing:
-                - data: The state data (dict if plaintext, str if encrypted)
-                - encrypted: Boolean indicating if data is encrypted
+                - data: The state data (base64-encoded string)
                 - updated_by: Public key of who last updated this state
                 - updated_at: Unix timestamp of last update
             None if state doesn't exist
@@ -53,8 +52,7 @@ class StateStore(ABC):
         self,
         channel_id: str,
         path: str,
-        data: Union[Dict, str],
-        encrypted: bool,
+        data: str,
         updated_by: str,
         updated_at: int
     ) -> None:
@@ -64,8 +62,7 @@ class StateStore(ABC):
         Args:
             channel_id: Channel identifier
             path: State path
-            data: State data (dict for plaintext, str for encrypted)
-            encrypted: Whether the data is encrypted
+            data: State data (base64-encoded string)
             updated_by: Public key of who is updating this state
             updated_at: Unix timestamp of update
         """
@@ -101,8 +98,7 @@ class StateStore(ABC):
         Returns:
             List of dictionaries, each containing:
                 - path: Full state path
-                - data: The state data (dict if plaintext, str if encrypted)
-                - encrypted: Boolean indicating if data is encrypted
+                - data: The state data (base64-encoded string)
                 - updated_by: Public key of who last updated this state
                 - updated_at: Unix timestamp of last update
             Results are ordered by path lexicographically
