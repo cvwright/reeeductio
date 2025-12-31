@@ -8,6 +8,7 @@ consistency and efficient time-range queries.
 
 from typing import Optional, List, Dict, Any
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 from message_store import MessageStore
 
 
@@ -97,9 +98,9 @@ class FirestoreMessageStore(MessageStore):
 
         # Apply time range filters
         if from_ts is not None:
-            query = query.where('server_timestamp', '>=', from_ts)
+            query = query.where(filter=FieldFilter('server_timestamp', '>=', from_ts))
         if to_ts is not None:
-            query = query.where('server_timestamp', '<=', to_ts)
+            query = query.where(filter=FieldFilter('server_timestamp', '<=', to_ts))
 
         # Apply limit
         query = query.limit(limit)

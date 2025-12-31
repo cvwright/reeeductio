@@ -7,6 +7,7 @@ Supports multi-instance deployments with automatic consistency.
 
 from typing import Optional, List, Dict, Any
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 from state_store import StateStore
 
 
@@ -129,8 +130,8 @@ class FirestoreStateStore(StateStore):
         if prefix:
             # Prefix query: path >= prefix AND path < prefix + '\uffff'
             # This works because Firestore uses lexicographic ordering
-            query = state_ref.where('path', '>=', prefix) \
-                            .where('path', '<', prefix + '\uffff') \
+            query = state_ref.where(filter=FieldFilter('path', '>=', prefix)) \
+                            .where(filter=FieldFilter('path', '<', prefix + '\uffff')) \
                             .order_by('path')
         else:
             # No prefix: just order by path
