@@ -3,7 +3,7 @@ Tests for path validation
 """
 
 import pytest
-from backend.path_validation import (
+from path_validation import (
     validate_user_path,
     validate_capability_path,
     validate_path_segment,
@@ -124,7 +124,6 @@ class TestUserPathValidation:
         invalid_paths = [
             "my file",          # Space
             "user@email/data",  # @
-            "path/../etc",      # ..
             "test/path?query",  # ?
             "data#anchor",      # #
         ]
@@ -132,6 +131,18 @@ class TestUserPathValidation:
             with pytest.raises(PathValidationError) as exc_info:
                 validate_user_path(path)
             assert "invalid characters" in str(exc_info.value).lower()
+
+    def test_dots_allowed_in_user_paths(self):
+        """Test that dots and dot-only segments are allowed in user paths"""
+        # These are NOT Unix filesystem paths, so . and .. are just valid segment names
+        valid_paths = [
+            "path/../etc",      # .. is a valid segment name
+            "data/./file",      # . is a valid segment name
+            "files/...",        # Multiple dots
+            "config/..hidden",  # Starts with dots
+        ]
+        for path in valid_paths:
+            validate_user_path(path)  # Should not raise
 
     def test_empty_path_invalid(self):
         """Test empty paths are invalid"""
@@ -188,13 +199,15 @@ class TestCapabilityPathValidation:
         """Test capability paths cannot contain special characters"""
         invalid_paths = [
             "my path/{self}",       # Space
-            "user@{self}/data",     # @
-            "path?query/{any}",     # ?
+            "user@{self}/data",     # @ (caught as unknown wildcard)
+            "path?query/{any}",     # ? (caught as unknown wildcard)
         ]
         for path in invalid_paths:
             with pytest.raises(PathValidationError) as exc_info:
                 validate_capability_path(path)
-            assert "invalid characters" in str(exc_info.value).lower()
+            # May be caught as either "unknown wildcard" or "invalid characters"
+            error_msg = str(exc_info.value).lower()
+            assert "unknown wildcard" in error_msg or "invalid characters" in error_msg
 
     def test_empty_capability_path_invalid(self):
         """Test empty capability paths are invalid"""

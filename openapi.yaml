@@ -759,6 +759,74 @@ components:
           maxLength: 44
           description: Typed user identifier of user who added this member
 
+    Role:
+      type: object
+      required: [role_id, description, created_by, created_at, signature]
+      description: |
+        Role definition stored at path: auth/roles/{role_id}
+        Capabilities for this role stored at: auth/roles/{role_id}/rights/{cap_id}
+      properties:
+        role_id:
+          type: string
+          pattern: '^[a-zA-Z0-9._-]+$'
+          description: Human-readable role identifier (e.g., "admin", "user", "moderator")
+          example: "user"
+        description:
+          type: string
+          description: Human-readable description of this role
+          example: "Default user role with read and post permissions"
+        created_by:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed user identifier of role creator
+        created_at:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when role was created
+        signature:
+          type: string
+          format: base64
+          description: Ed25519 signature over the role definition by creator
+
+    RoleGrant:
+      type: object
+      required: [user_id, role_id, granted_by, granted_at, signature]
+      description: |
+        Role grant stored at path: auth/users/{user_id}/roles/{role_id}
+        Grants a user membership in a role, inheriting all capabilities defined for that role.
+      properties:
+        user_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed user identifier of the user receiving the role
+        role_id:
+          type: string
+          pattern: '^[a-zA-Z0-9._-]+$'
+          description: Human-readable role identifier being granted
+          example: "user"
+        granted_by:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed user identifier of the user granting this role
+        granted_at:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when role was granted
+        expires_at:
+          type: integer
+          format: int64
+          description: Optional Unix timestamp in milliseconds when role grant expires
+        signature:
+          type: string
+          format: base64
+          description: Ed25519 signature over the role grant by granter
+
     Error:
       type: object
       properties:

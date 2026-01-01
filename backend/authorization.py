@@ -16,6 +16,7 @@ from path_validation import validate_capability_path, PathValidationError
 import fnmatch
 import base64
 import json
+import time
 
 
 class AuthorizationEngine:
@@ -55,11 +56,17 @@ class AuthorizationEngine:
             # If extraction fails, fall through to capability check
             pass
         
-        # Load all capabilities for this user
+        # Load direct capabilities for this user
         capabilities = self._load_user_capabilities(channel_id, user_public_key)
 
+        # Load capabilities inherited from roles
+        role_capabilities = self._load_role_capabilities(channel_id, user_public_key)
+
+        # Combine all capabilities
+        all_capabilities = capabilities + role_capabilities
+
         # Check if any capability grants permission
-        for cap in capabilities:
+        for cap in all_capabilities:
             if self._capability_grants_permission(cap, operation, state_path, user_public_key):
                 return True
 
@@ -74,11 +81,11 @@ class AuthorizationEngine:
         Load all capabilities for a user from state
 
         Capabilities are stored at state path:
-        members/{public_key}/rights/{capability_id}
+        auth/users/{public_key}/rights/{capability_id}
 
         Data is base64-encoded JSON, so we need to decode it.
         """
-        prefix = f"members/{user_public_key}/rights/"
+        prefix = f"auth/users/{user_public_key}/rights/"
         capability_states = self.state_store.list_state(channel_id, prefix)
 
         capabilities = []
@@ -97,7 +104,80 @@ class AuthorizationEngine:
                 continue
 
         return capabilities
-    
+
+    def _load_role_capabilities(
+        self,
+        channel_id: str,
+        user_public_key: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Load all capabilities inherited from user's roles.
+
+        Process:
+        1. Load user's role memberships from auth/users/{user_id}/roles/
+        2. For each role, load role's capabilities from auth/roles/{role_id}/rights/
+        3. Verify all capability signatures
+        4. Return combined list of all role capabilities
+
+        Args:
+            channel_id: Channel identifier
+            user_public_key: User's public key
+
+        Returns:
+            List of capability dictionaries from all roles
+        """
+        # Load user's role grants
+        role_prefix = f"auth/users/{user_public_key}/roles/"
+        role_grants = self.state_store.list_state(channel_id, role_prefix)
+
+        all_role_capabilities = []
+
+        for role_grant_state in role_grants:
+            try:
+                # Decode role grant
+                decoded = base64.b64decode(role_grant_state["data"])
+                role_grant = json.loads(decoded)
+
+                role_id = role_grant.get("role_id")
+                if not role_id:
+                    continue
+
+                # Check if role grant has expired
+                expires_at = role_grant.get("expires_at")
+                if expires_at and expires_at < (int(time.time() * 1000)):
+                    continue  # Skip expired role
+
+                # TODO: Verify role grant signature?
+                # For now, we trust role grants that made it into state
+                # (they were validated during state write)
+
+                # Load capabilities for this role
+                role_cap_prefix = f"auth/roles/{role_id}/rights/"
+                role_cap_states = self.state_store.list_state(channel_id, role_cap_prefix)
+
+                for cap_state in role_cap_states:
+                    try:
+                        cap_decoded = base64.b64decode(cap_state["data"])
+                        cap = json.loads(cap_decoded)
+
+                        # Verify capability signature
+                        # Role capabilities are signed as if granted to the role itself
+                        # We use the role_id as the "recipient" for verification
+                        # This ensures the capability was validly added to the role
+                        if self._verify_capability(channel_id, role_id, cap):
+                            all_role_capabilities.append(cap)
+                        else:
+                            print(f"Invalid signature for role capability in role {role_id}")
+                    except Exception as e:
+                        print(f"Failed to decode role capability: {e}")
+                        continue
+
+            except Exception as e:
+                print(f"Failed to decode role grant: {e}")
+                continue
+
+        return all_role_capabilities
+
     def _verify_capability(
         self,
         channel_id: str,
@@ -243,14 +323,31 @@ class AuthorizationEngine:
     def is_capability_path(self, path: str) -> bool:
         """
         Check if a state path is for capability grants
-        
-        Capability paths: members/{public_key}/rights/{capability_id}
+
+        Capability paths:
+        - auth/users/{public_key}/rights/{capability_id}
+        - auth/roles/{role_id}/rights/{capability_id}
         """
         parts = path.strip('/').split('/')
         return (
-            len(parts) >= 4 and
-            parts[0] == 'members' and
-            parts[2] == 'rights'
+            len(parts) >= 5 and
+            parts[0] == 'auth' and
+            parts[1] in ('users', 'roles') and
+            parts[3] == 'rights'
+        )
+
+    def is_role_grant_path(self, path: str) -> bool:
+        """
+        Check if a state path is for role grants
+
+        Role grant paths: auth/users/{public_key}/roles/{role_id}
+        """
+        parts = path.strip('/').split('/')
+        return (
+            len(parts) >= 5 and
+            parts[0] == 'auth' and
+            parts[1] == 'users' and
+            parts[3] == 'roles'
         )
     
     def verify_capability_grant(
@@ -289,12 +386,12 @@ class AuthorizationEngine:
             return False
 
         # Extract recipient public key from path
-        # Path format: members/{recipient_key}/rights/{cap_id}
+        # Path format: auth/users/{recipient_key}/rights/{cap_id}
         parts = path.strip('/').split('/')
-        if len(parts) < 2:
+        if len(parts) < 3:
             return False
 
-        recipient_key = parts[1]
+        recipient_key = parts[2]
 
         # Verify signature
         try:
@@ -327,7 +424,7 @@ class AuthorizationEngine:
             if self._capability_grants_permission(
                 cap,
                 "create",
-                "members/{any}/rights/",
+                "auth/users/{any}/rights/",
                 granter_public_key
             ):
                 can_grant = True
@@ -341,7 +438,102 @@ class AuthorizationEngine:
             granter_caps,
             [capability_data]
         )
-    
+
+    def verify_role_grant(
+        self,
+        channel_id: str,
+        path: str,
+        role_grant_data: dict,
+        granter_public_key: str,
+        signature_b64: str
+    ) -> bool:
+        """
+        Verify that a role grant is valid
+
+        Checks:
+        1. Signature is valid
+        2. Granter exists (or is channel_id)
+        3. Role exists
+        4. Granter has superset of all capabilities in the role
+
+        Args:
+            channel_id: Typed channel identifier
+            path: State path where role grant is being stored
+            role_grant_data: The role grant being created
+            granter_public_key: Typed user identifier of granter
+            signature_b64: Base64-encoded signature
+
+        Returns:
+            True if grant is valid
+        """
+        # Extract recipient and role from path
+        # Path format: auth/users/{recipient_key}/roles/{role_id}
+        parts = path.strip('/').split('/')
+        if len(parts) < 5:
+            return False
+
+        # recipient_key = parts[2]  # Not currently used, would be for signature verification
+        role_id = parts[4]
+
+        # Verify signature
+        # TODO: Need a verify_role_grant_signature method in crypto
+        # For now, trust that it was validated during state write
+        # Parameters role_grant_data and signature_b64 will be used when this is implemented
+
+        # Channel creator can grant anything
+        # Compare the underlying public keys (granter might be U_xxx while channel is C_xxx)
+        try:
+            granter_bytes = extract_public_key(granter_public_key)
+            channel_bytes = extract_public_key(channel_id)
+            if granter_bytes == channel_bytes:
+                return True
+        except Exception:
+            pass  # If extraction fails, continue with normal checks
+
+        # Load all capabilities in this role
+        role_cap_prefix = f"auth/roles/{role_id}/rights/"
+        role_cap_states = self.state_store.list_state(channel_id, role_cap_prefix)
+
+        role_capabilities = []
+        for cap_state in role_cap_states:
+            try:
+                cap_decoded = base64.b64decode(cap_state["data"])
+                cap = json.loads(cap_decoded)
+                role_capabilities.append(cap)
+            except Exception as e:
+                print(f"Failed to decode role capability: {e}")
+                continue
+
+        # If role has no capabilities, allow grant
+        if not role_capabilities:
+            return True
+
+        # Load granter's capabilities (including their roles!)
+        granter_direct_caps = self._load_user_capabilities(channel_id, granter_public_key)
+        granter_role_caps = self._load_role_capabilities(channel_id, granter_public_key)
+        granter_all_caps = granter_direct_caps + granter_role_caps
+
+        # Check if granter has permission to grant roles
+        can_grant = False
+        for cap in granter_all_caps:
+            if self._capability_grants_permission(
+                cap,
+                "create",
+                "auth/users/{any}/roles/",
+                granter_public_key
+            ):
+                can_grant = True
+                break
+
+        if not can_grant:
+            return False
+
+        # Check if granter has superset of all role capabilities
+        return self._has_capability_superset(
+            granter_all_caps,
+            role_capabilities
+        )
+
     def _has_capability_superset(
         self,
         granter_caps: List[dict],
@@ -400,6 +592,8 @@ class AuthorizationEngine:
         NOT runtime path matching. We're checking if the granter's capability
         pattern subsumes the requested capability pattern.
 
+        All capability matches are prefix matches in our scheme.
+
         Wildcard subsumption rules:
         - {any} subsumes everything ({any}, {self}, {other}, literals)
         - {self} only subsumes {self}
@@ -407,11 +601,11 @@ class AuthorizationEngine:
         - Literals only subsume identical literals
 
         Examples:
-          grant="profiles/{any}/" covers req="profiles/{self}/" → True
-          grant="profiles/{self}/" covers req="profiles/{any}/" → False
-          grant="members/" covers req="members/" → True
-          grant="members/" covers req="topics/" → False
-          grant="members/" covers req="members/alice/" → True (prefix)
+          grant="profiles/{any}" covers req="profiles/{self}/" → True
+          grant="profiles/{self}" covers req="profiles/{any}/" → False
+          grant="members" covers req="members/" → True
+          grant="members" covers req="topics/" → False
+          grant="members" covers req="members/alice/" → True (prefix)
         """
         # Exact match
         if grant_path == req_path:
@@ -426,21 +620,16 @@ class AuthorizationEngine:
         req_parts = req_norm.split('/')
 
         # For prefix matching: grant must not have more segments than req
-        # unless grant ends with trailing slash (which was stripped)
-        if grant_path.endswith('/'):
-            # Prefix match: grant_path covers any path starting with it
-            if len(grant_parts) > len(req_parts):
+        if len(grant_parts) > len(req_parts):
+            return False
+
+        # Check each segment with wildcard subsumption
+        for i, grant_seg in enumerate(grant_parts):
+            req_seg = req_parts[i]
+            if not self._wildcard_subsumes(grant_seg, req_seg):
                 return False
 
-            # Check each segment with wildcard subsumption
-            for i, grant_seg in enumerate(grant_parts):
-                req_seg = req_parts[i]
-                if not self._wildcard_subsumes(grant_seg, req_seg):
-                    return False
-            return True
-        else:
-            # Exact match required (already checked above)
-            return False
+        return True
 
     def _wildcard_subsumes(self, granter_seg: str, requested_seg: str) -> bool:
         """

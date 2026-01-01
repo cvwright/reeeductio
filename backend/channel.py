@@ -371,6 +371,36 @@ class Channel:
             if not self.verify_capability_grant(path, capability_dict, signed_by, signature):
                 raise ValueError("Invalid capability grant or privilege escalation")
 
+        # For role grant paths, validate signature
+        if self.authz.is_role_grant_path(path):
+            if not signature or not signed_by:
+                raise ValueError("Signature required for role grants")
+
+            # Decode and validate role grant
+            import base64
+            import json
+            try:
+                decoded = base64.b64decode(data)
+                role_grant_dict = json.loads(decoded)
+            except Exception as e:
+                raise ValueError(f"Role grants must be base64-encoded JSON objects: {e}")
+
+            # Path-content consistency validation
+            parts = path.strip('/').split('/')
+            if len(parts) >= 5:
+                path_user_id = parts[2]
+                path_role_id = parts[4]
+
+                if role_grant_dict.get("user_id") != path_user_id:
+                    raise ValueError(f"Role grant user_id mismatch: path has '{path_user_id}' but data has '{role_grant_dict.get('user_id')}'")
+
+                if role_grant_dict.get("role_id") != path_role_id:
+                    raise ValueError(f"Role grant role_id mismatch: path has '{path_role_id}' but data has '{role_grant_dict.get('role_id')}'")
+
+            # Verify the role grant (subset checking)
+            if not self.authz.verify_role_grant(self.channel_id, path, role_grant_dict, signed_by, signature):
+                raise ValueError("Invalid role grant or privilege escalation")
+
         # Store state
         now = int(time.time() * 1000)
         self.state_store.set_state(

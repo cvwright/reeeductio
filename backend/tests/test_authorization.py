@@ -24,7 +24,7 @@ def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keyp
     # Create a capability for user
     capability = {
         "op": "read",
-        "path": "*",
+        "path": "{any}",
         "granted_by": admin_id,
         "granted_at": 12345000
     }
@@ -45,7 +45,7 @@ def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keyp
     capability_b64 = base64.b64encode(capability_json.encode()).decode()
     state_store.set_state(
         channel_id,
-        f"members/{user_id}/rights/read_all",
+        f"auth/users/{user_id}/rights/read_all",
         capability_b64,
         updated_by=admin_id,
         updated_at=12345000
@@ -66,21 +66,24 @@ def test_ungranted_capability_rejection(authz, admin_keypair, user_keypair):
 
 def test_path_matching(authz):
     """Test path matching logic with new wildcard syntax"""
-    # {any} matches one segment
+    # All matches are prefix matches
+    # {any} matches one segment as prefix
     assert authz._path_matches("{any}", "members")
-    assert not authz._path_matches("{any}", "members/alice")  # Too many segments
+    assert authz._path_matches("{any}", "members/alice")  # Prefix match
 
-    # {any} with user context
+    # {any} with additional segments
     assert authz._path_matches("members/{any}", "members/alice")
+    assert authz._path_matches("members/{any}", "members/alice/rights")  # Prefix match
 
     # {self} resolves to user ID
     assert authz._path_matches("profiles/{self}/", "profiles/U_alice/", "U_alice")
+    assert authz._path_matches("profiles/{self}", "profiles/U_alice/settings", "U_alice")  # Prefix match
     assert not authz._path_matches("profiles/{self}/", "profiles/U_bob/", "U_alice")
 
     # Prefix matching
     assert authz._path_matches("members/", "members/alice")
 
-    # Exact match required without trailing slash
+    # Different paths don't match
     assert not authz._path_matches("members/alice", "members/bob")
 
 
