@@ -163,7 +163,11 @@ paths:
           required: true
           schema:
             type: string
-          description: State path (e.g., "members/abc123" or "user/xyz/preferences")
+            pattern: '^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)*$'
+          description: |
+            State path using slug-formatted segments (alphanumeric, dots, hyphens, underscores).
+            Examples: "profiles/alice", "topics/general/messages", "files/photo.jpg"
+            Wildcards like {self}, {any} are NOT allowed in user-created paths.
       security:
         - BearerAuth: []
       responses:
@@ -712,8 +716,14 @@ components:
           description: Operation type (write is superset of create)
         path:
           type: string
-          description: State path pattern (supports * wildcard)
-          example: "members/*/rights/"
+          description: |
+            State path pattern supporting wildcards:
+            - {self} - resolves to acting user's ID
+            - {any} - matches any single segment
+            - {other} - matches any ID except acting user
+            - Trailing / indicates prefix match
+            Examples: "profiles/{self}/", "topics/{any}/messages/", "auth/users/{other}/banned"
+          example: "profiles/{self}/"
         granted_by:
           type: string
           pattern: '^[A-Za-z0-9_-]{44}$'

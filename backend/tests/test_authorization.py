@@ -65,30 +65,62 @@ def test_ungranted_capability_rejection(authz, admin_keypair, user_keypair):
 
 
 def test_path_matching(authz):
-    """Test path matching logic"""
-    assert authz._path_matches("*", "members")
+    """Test path matching logic with new wildcard syntax"""
+    # {any} matches one segment
+    assert authz._path_matches("{any}", "members")
+    assert not authz._path_matches("{any}", "members/alice")  # Too many segments
+
+    # {any} with user context
+    assert authz._path_matches("members/{any}", "members/alice")
+
+    # {self} resolves to user ID
+    assert authz._path_matches("profiles/{self}/", "profiles/U_alice/", "U_alice")
+    assert not authz._path_matches("profiles/{self}/", "profiles/U_bob/", "U_alice")
+
+    # Prefix matching
     assert authz._path_matches("members/", "members/alice")
+
+    # Exact match required without trailing slash
     assert not authz._path_matches("members/alice", "members/bob")
 
 
 def test_capability_subset_checking(authz):
-    """Test capability subset checking"""
+    """Test capability subset checking with new wildcard syntax"""
+    # {any} subsumes everything
     granter_caps = [
-        {"op": "write", "path": "*"}
+        {"op": "write", "path": "{any}"}
     ]
     requested_caps = [
         {"op": "create", "path": "members/"}
     ]
     assert authz._has_capability_superset(granter_caps, requested_caps)
 
+    # profiles/{any}/ subsumes profiles/{self}/
+    granter_caps = [
+        {"op": "write", "path": "profiles/{any}/"}
+    ]
+    requested_caps = [
+        {"op": "write", "path": "profiles/{self}/"}
+    ]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # profiles/{self}/ does NOT subsume profiles/{any}/
+    granter_caps = [
+        {"op": "write", "path": "profiles/{self}/"}
+    ]
+    requested_caps = [
+        {"op": "write", "path": "profiles/{any}/"}
+    ]
+    assert not authz._has_capability_superset(granter_caps, requested_caps)
+
 
 def test_privilege_escalation_prevention(authz):
     """Test that privilege escalation is prevented"""
     # User with read can't grant write
     granter_caps = [
-        {"op": "read", "path": "*"}
+        {"op": "read", "path": "{any}"}
     ]
     requested_caps = [
-        {"op": "write", "path": "*"}
+        {"op": "write", "path": "{any}"}
     ]
     assert not authz._has_capability_superset(granter_caps, requested_caps)

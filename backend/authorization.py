@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Any
 from state_store import StateStore
 from crypto import CryptoUtils
 from identifiers import extract_public_key
+from path_validation import validate_capability_path, PathValidationError
 import fnmatch
 import base64
 import json
@@ -56,12 +57,12 @@ class AuthorizationEngine:
         
         # Load all capabilities for this user
         capabilities = self._load_user_capabilities(channel_id, user_public_key)
-        
+
         # Check if any capability grants permission
         for cap in capabilities:
-            if self._capability_grants_permission(cap, operation, state_path):
+            if self._capability_grants_permission(cap, operation, state_path, user_public_key):
                 return True
-        
+
         return False
     
     def _load_user_capabilities(
@@ -138,24 +139,26 @@ class AuthorizationEngine:
         self,
         capability: dict,
         operation: str,
-        state_path: str
+        state_path: str,
+        user_public_key: Optional[str] = None
     ) -> bool:
         """
         Check if a capability grants permission for an operation on a path
-        
+
         Args:
             capability: Capability dict with 'op' and 'path'
             operation: 'read', 'create', or 'write'
             state_path: State path being accessed
-        
+            user_public_key: User's public key for {self} wildcard resolution
+
         Returns:
             True if capability grants permission
         """
         cap_op = capability["op"]
         cap_path = capability["path"]
-        
+
         # Check if path matches
-        if not self._path_matches(cap_path, state_path):
+        if not self._path_matches(cap_path, state_path, user_public_key):
             return False
         
         # Check if operation is allowed
@@ -172,23 +175,26 @@ class AuthorizationEngine:
         
         return False
     
-    def _path_matches(self, pattern: str, path: str) -> bool:
+    def _path_matches(self, pattern: str, path: str, user_public_key: Optional[str] = None) -> bool:
         """
         Check if a path matches a pattern with wildcards
 
         Patterns:
-        - '*' matches one path segment
+        - {any} matches one path segment
+        - {self} resolves to user_public_key
+        - {other} matches any segment except user_public_key
         - Trailing '/' indicates prefix match
 
         Examples:
-          pattern="members/*", path="members/alice" → True
+          pattern="members/{any}", path="members/alice", user="U_alice" → True
+          pattern="profiles/{self}/", path="profiles/U_alice/", user="U_alice" → True
+          pattern="profiles/{self}/", path="profiles/U_bob/", user="U_alice" → False
           pattern="members/", path="members/alice/rights/cap1" → True
-          pattern="*", path="members" → True
-          pattern="*", path="members/alice" → False
 
         Args:
             pattern: Pattern with optional wildcards
             path: Path to match
+            user_public_key: User's public key for {self} wildcard resolution
 
         Returns:
             True if path matches pattern
@@ -211,10 +217,24 @@ class AuthorizationEngine:
 
         # Check each segment in the pattern
         for i, pattern_part in enumerate(pattern_parts):
-            if pattern_part == '*':
-                # Wildcard matches any single segment
+            if pattern_part == '{any}':
+                # {any} wildcard matches any single segment
+                continue
+            elif pattern_part == '{self}':
+                # {self} resolves to user's public key
+                if user_public_key is None:
+                    # Cannot match {self} without user context
+                    return False
+                if path_parts[i] != user_public_key:
+                    return False
+            elif pattern_part == '{other}':
+                # {other} matches any segment EXCEPT user's public key
+                if user_public_key is not None and path_parts[i] == user_public_key:
+                    return False
+                # Otherwise matches
                 continue
             elif pattern_part != path_parts[i]:
+                # Literal segment must match exactly
                 return False
 
         # All pattern segments matched
@@ -245,9 +265,10 @@ class AuthorizationEngine:
         Verify that a capability grant is valid
 
         Checks:
-        1. Signature is valid
-        2. Granter exists (or is channel_id)
-        3. Granter has the capability they're trying to grant
+        1. Capability path pattern is valid (no unknown wildcards)
+        2. Signature is valid
+        3. Granter exists (or is channel_id)
+        4. Granter has the capability they're trying to grant
 
         Args:
             channel_id: Typed channel identifier
@@ -259,6 +280,14 @@ class AuthorizationEngine:
         Returns:
             True if grant is valid
         """
+        # Validate the capability path pattern
+        capability_path = capability_data.get("path", "")
+        try:
+            validate_capability_path(capability_path)
+        except PathValidationError as e:
+            print(f"Invalid capability path pattern '{capability_path}': {e}")
+            return False
+
         # Extract recipient public key from path
         # Path format: members/{recipient_key}/rights/{cap_id}
         parts = path.strip('/').split('/')
@@ -298,7 +327,8 @@ class AuthorizationEngine:
             if self._capability_grants_permission(
                 cap,
                 "create",
-                f"members/*/rights/"
+                "members/{any}/rights/",
+                granter_public_key
             ):
                 can_grant = True
                 break
@@ -364,24 +394,60 @@ class AuthorizationEngine:
     
     def _path_covers(self, grant_path: str, req_path: str) -> bool:
         """
-        Check if grant_path covers (is more general than) req_path
+        Check if grant_path pattern covers (is more general than) req_path pattern
+
+        This is pattern-to-pattern comparison for capability subset validation,
+        NOT runtime path matching. We're checking if the granter's capability
+        pattern subsumes the requested capability pattern.
+
+        Wildcard subsumption rules:
+        - {any} subsumes everything ({any}, {self}, {other}, literals)
+        - {self} only subsumes {self}
+        - {other} only subsumes {other}
+        - Literals only subsume identical literals
 
         Examples:
-          grant="*" covers req="members/" → True
+          grant="profiles/{any}/" covers req="profiles/{self}/" → True
+          grant="profiles/{self}/" covers req="profiles/{any}/" → False
           grant="members/" covers req="members/" → True
           grant="members/" covers req="topics/" → False
-          grant="members/alice/" covers req="members/alice/rights/" → True
+          grant="members/" covers req="members/alice/" → True (prefix)
         """
         # Exact match
         if grant_path == req_path:
             return True
-        
-        # Prefix match
-        grant_norm = grant_path.rstrip('/')
-        req_norm = req_path.rstrip('/')
-        
-        if req_norm.startswith(grant_norm):
+
+        # Normalize
+        grant_norm = grant_path.strip('/')
+        req_norm = req_path.strip('/')
+
+        # Split into segments
+        grant_parts = grant_norm.split('/')
+        req_parts = req_norm.split('/')
+
+        # For prefix matching: grant must not have more segments than req
+        # unless grant ends with trailing slash (which was stripped)
+        if grant_path.endswith('/'):
+            # Prefix match: grant_path covers any path starting with it
+            if len(grant_parts) > len(req_parts):
+                return False
+
+            # Check each segment with wildcard subsumption
+            for i, grant_seg in enumerate(grant_parts):
+                req_seg = req_parts[i]
+                if not self._wildcard_subsumes(grant_seg, req_seg):
+                    return False
             return True
-        
-        # Wildcard match
-        return self._path_matches(grant_path, req_path)
+        else:
+            # Exact match required (already checked above)
+            return False
+
+    def _wildcard_subsumes(self, granter_seg: str, requested_seg: str) -> bool:
+        """
+        Check if granter's path segment subsumes requested segment.
+
+        {any} subsumes everything, otherwise must match exactly.
+        """
+        if granter_seg == '{any}':
+            return True
+        return granter_seg == requested_seg

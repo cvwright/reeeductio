@@ -20,6 +20,7 @@ from crypto import CryptoUtils
 from blob_store import BlobStore
 from authorization import AuthorizationEngine
 from identifiers import extract_public_key
+from path_validation import validate_user_path, PathValidationError
 import secrets
 import jwt
 
@@ -287,7 +288,14 @@ class Channel:
 
         Raises:
             ValueError: If auth fails, permission denied, or state not found
+            PathValidationError: If path contains invalid characters or wildcards
         """
+        # Validate path
+        try:
+            validate_user_path(path)
+        except PathValidationError as e:
+            raise ValueError(f"Invalid path: {e}")
+
         # Authenticate
         user = self.authenticate_request(token)
 
@@ -325,7 +333,15 @@ class Channel:
 
         Raises:
             ValueError: If auth fails, permission denied, or validation fails
+            PathValidationError: If path contains invalid characters or wildcards
         """
+        # VALIDATE PATH FIRST - before authentication or authorization
+        # This prevents wildcard injection attacks
+        try:
+            validate_user_path(path)
+        except PathValidationError as e:
+            raise ValueError(f"Invalid path: {e}")
+
         # Authenticate
         user = self.authenticate_request(token)
 
@@ -377,7 +393,14 @@ class Channel:
 
         Raises:
             ValueError: If auth fails, permission denied, or state not found
+            PathValidationError: If path contains invalid characters or wildcards
         """
+        # Validate path
+        try:
+            validate_user_path(path)
+        except PathValidationError as e:
+            raise ValueError(f"Invalid path: {e}")
+
         # Authenticate
         user = self.authenticate_request(token)
 
