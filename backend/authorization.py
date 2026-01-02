@@ -34,10 +34,49 @@ class AuthorizationEngine:
         except Exception:
             return False
 
+    def _verify_state_entry_signature(
+        self,
+        channel_id: str,
+        state_entry: Dict[str, Any]
+    ) -> bool:
+        """
+        Verify the signature on a state entry.
+
+        All state entries must be cryptographically signed. This verifies that
+        the state entry's signature is valid.
+
+        Args:
+            channel_id: Channel identifier
+            state_entry: State entry dict with path, data, signature, signed_by, signed_at
+
+        Returns:
+            True if signature is valid
+        """
+        required_fields = ["path", "data", "signature", "signed_by", "signed_at"]
+        if not all(field in state_entry for field in required_fields):
+            return False
+
+        try:
+            # Reconstruct the message that was signed: channel_id|path|data|signed_at
+            message_to_sign = '|'.join([
+                channel_id,
+                state_entry["path"],
+                state_entry["data"],
+                str(state_entry["signed_at"])
+            ]).encode('utf-8')
+
+            signature_bytes = self.crypto.base64_decode(state_entry["signature"])
+            signer_public_key = extract_public_key(state_entry["signed_by"])
+
+            return self.crypto.verify_signature(message_to_sign, signature_bytes, signer_public_key)
+        except Exception as e:
+            print(f"State entry signature verification failed: {e}")
+            return False
+
     def check_permission(
         self,
         channel_id: str,
-        user_public_key: str,
+        member_id: str,
         operation: str,
         state_path: str
     ) -> bool:
@@ -46,7 +85,7 @@ class AuthorizationEngine:
 
         Args:
             channel_id: Channel identifier
-            user_public_key: User or tool typed identifier
+            member_id: User or tool typed identifier
             operation: 'read', 'create', or 'write'
             state_path: State path being accessed
 
@@ -54,13 +93,13 @@ class AuthorizationEngine:
             True if user/tool has permission
         """
         # Tools have NO ambient authority - they can only use explicit capabilities
-        if self._is_tool(user_public_key):
+        if self._is_tool(member_id):
             # Load tool capabilities only
-            capabilities = self._load_tool_capabilities(channel_id, user_public_key)
+            capabilities = self._load_tool_capabilities(channel_id, member_id)
 
             # Check if any capability grants permission
             for cap in capabilities:
-                if self._capability_grants_permission(cap, operation, state_path, user_public_key):
+                if self._capability_grants_permission(cap, operation, state_path, member_id):
                     return True
 
             return False
@@ -69,7 +108,7 @@ class AuthorizationEngine:
         # Compare underlying public keys (channel and user IDs have different type prefixes)
         try:
             channel_pubkey = extract_public_key(channel_id)
-            user_pubkey = extract_public_key(user_public_key)
+            user_pubkey = extract_public_key(member_id)
             if channel_pubkey == user_pubkey:
                 return True
         except ValueError:
@@ -77,17 +116,19 @@ class AuthorizationEngine:
             pass
 
         # Load direct capabilities for this user
-        capabilities = self._load_user_capabilities(channel_id, user_public_key)
+        capabilities = self._load_user_capabilities(channel_id, member_id)
+        print(f"Found {len(capabilities)} capabilities for user {member_id}")
 
         # Load capabilities inherited from roles
-        role_capabilities = self._load_role_capabilities(channel_id, user_public_key)
+        role_capabilities = self._load_role_capabilities(channel_id, member_id)
+        print(f"Found {len(role_capabilities)} capabilities for user {member_id}")
 
         # Combine all capabilities
         all_capabilities = capabilities + role_capabilities
 
         # Check if any capability grants permission
         for cap in all_capabilities:
-            if self._capability_grants_permission(cap, operation, state_path, user_public_key):
+            if self._capability_grants_permission(cap, operation, state_path, member_id):
                 return True
 
         return False
@@ -95,7 +136,7 @@ class AuthorizationEngine:
     def _load_user_capabilities(
         self,
         channel_id: str,
-        user_public_key: str
+        user_id: str
     ) -> List[Dict[str, Any]]:
         """
         Load all capabilities for a user from state
@@ -105,19 +146,22 @@ class AuthorizationEngine:
 
         Data is base64-encoded JSON, so we need to decode it.
         """
-        prefix = f"auth/users/{user_public_key}/rights/"
+        prefix = f"auth/users/{user_id}/rights"
         capability_states = self.state_store.list_state(channel_id, prefix)
+        print(f"Found {len(capability_states)} rights state entries for user {user_id}")
 
         capabilities = []
         for state in capability_states:
+            # Verify state entry signature first
+            if not self._verify_state_entry_signature(channel_id, state):
+                print(f"Invalid state entry signature for {state.get('path', 'unknown')}")
+                continue
+
             # Decode base64 data and parse JSON
             try:
                 decoded = base64.b64decode(state["data"])
                 cap = json.loads(decoded)
-
-                # Verify capability signature
-                if self._verify_capability(channel_id, user_public_key, cap):
-                    capabilities.append(cap)
+                capabilities.append(cap)
             except Exception as e:
                 # Skip invalid capability entries
                 print(f"Failed to decode capability: {e}")
@@ -128,7 +172,7 @@ class AuthorizationEngine:
     def _load_role_capabilities(
         self,
         channel_id: str,
-        user_public_key: str
+        user_id: str
     ) -> List[Dict[str, Any]]:
         """
         Load all capabilities inherited from user's roles.
@@ -141,18 +185,23 @@ class AuthorizationEngine:
 
         Args:
             channel_id: Channel identifier
-            user_public_key: User's public key
+            user_id: User's typed identifier
 
         Returns:
             List of capability dictionaries from all roles
         """
         # Load user's role grants
-        role_prefix = f"auth/users/{user_public_key}/roles/"
+        role_prefix = f"auth/users/{user_id}/roles/"
         role_grants = self.state_store.list_state(channel_id, role_prefix)
 
         all_role_capabilities = []
 
         for role_grant_state in role_grants:
+            # Verify role grant state entry signature first
+            if not self._verify_state_entry_signature(channel_id, role_grant_state):
+                print(f"Invalid state entry signature for role grant {role_grant_state.get('path', 'unknown')}")
+                continue
+
             try:
                 # Decode role grant
                 decoded = base64.b64decode(role_grant_state["data"])
@@ -167,27 +216,20 @@ class AuthorizationEngine:
                 if expires_at and expires_at < (int(time.time() * 1000)):
                     continue  # Skip expired role
 
-                # TODO: Verify role grant signature?
-                # For now, we trust role grants that made it into state
-                # (they were validated during state write)
-
                 # Load capabilities for this role
                 role_cap_prefix = f"auth/roles/{role_id}/rights/"
                 role_cap_states = self.state_store.list_state(channel_id, role_cap_prefix)
 
                 for cap_state in role_cap_states:
+                    # Verify role capability state entry signature
+                    if not self._verify_state_entry_signature(channel_id, cap_state):
+                        print(f"Invalid state entry signature for role capability {cap_state.get('path', 'unknown')}")
+                        continue
+
                     try:
                         cap_decoded = base64.b64decode(cap_state["data"])
                         cap = json.loads(cap_decoded)
-
-                        # Verify capability signature
-                        # Role capabilities are signed as if granted to the role itself
-                        # We use the role_id as the "recipient" for verification
-                        # This ensures the capability was validly added to the role
-                        if self._verify_capability(channel_id, role_id, cap):
-                            all_role_capabilities.append(cap)
-                        else:
-                            print(f"Invalid signature for role capability in role {role_id}")
+                        all_role_capabilities.append(cap)
                     except Exception as e:
                         print(f"Failed to decode role capability: {e}")
                         continue
@@ -221,56 +263,21 @@ class AuthorizationEngine:
 
         capabilities = []
         for state in capability_states:
+            # Verify state entry signature first
+            if not self._verify_state_entry_signature(channel_id, state):
+                print(f"Invalid state entry signature for tool capability {state.get('path', 'unknown')}")
+                continue
+
             try:
                 decoded = base64.b64decode(state["data"])
                 cap = json.loads(decoded)
-
-                # Verify capability signature
-                if self._verify_capability(channel_id, tool_public_key, cap):
-                    capabilities.append(cap)
+                capabilities.append(cap)
             except Exception as e:
                 print(f"Failed to decode tool capability: {e}")
                 continue
 
         return capabilities
 
-    def _verify_capability(
-        self,
-        channel_id: str,
-        recipient_public_key: str,
-        capability: dict
-    ) -> bool:
-        """
-        Verify that a capability is validly signed
-
-        Args:
-            channel_id: Typed channel identifier
-            recipient_public_key: Typed user identifier receiving the capability
-            capability: Capability dict with signature
-
-        Returns:
-            True if signature is valid
-        """
-        required_fields = ["op", "path", "granted_by", "granted_at", "signature"]
-        if not all(field in capability for field in required_fields):
-            return False
-
-        try:
-            signature = self.crypto.base64_decode(capability["signature"])
-            # Extract raw public key from typed identifier
-            granter_key = extract_public_key(capability["granted_by"])
-
-            return self.crypto.verify_capability_signature(
-                channel_id,
-                recipient_public_key,
-                capability,
-                signature,
-                granter_key
-            )
-        except Exception as e:
-            print(f"Capability verification failed: {e}")
-            return False
-    
     def _capability_grants_permission(
         self,
         capability: dict,
@@ -443,28 +450,31 @@ class AuthorizationEngine:
         channel_id: str,
         path: str,
         capability_data: dict,
-        granter_public_key: str,
-        signature_b64: str
+        granted_by: str
     ) -> bool:
         """
         Verify that a capability grant is valid
 
         Checks:
         1. Capability path pattern is valid (no unknown wildcards)
-        2. Signature is valid
-        3. Granter exists (or is channel_id)
-        4. Granter has the capability they're trying to grant
+        2. For users (not tools): Granter has the capability they're trying to grant (superset check)
+        3. For tools: They can write any capability for which they have write permission
+
+        Note: The state entry signature is verified separately by the caller.
+        This method only validates the capability grant logic.
 
         Args:
             channel_id: Typed channel identifier
             path: State path where capability is being stored
             capability_data: The capability being granted
-            granter_public_key: Typed user identifier of granter
-            signature_b64: Base64-encoded signature
+            granted_by: Typed user identifier or tool identifier of the writer
 
         Returns:
             True if grant is valid
         """
+        print("Authz: Verifying capability grant")
+        print(f"Channel = {channel_id}")
+
         # Validate the capability path pattern
         capability_path = capability_data.get("path", "")
         try:
@@ -472,40 +482,37 @@ class AuthorizationEngine:
         except PathValidationError as e:
             print(f"Invalid capability path pattern '{capability_path}': {e}")
             return False
+        print("Capability path validates")
 
         # Extract recipient public key from path
-        # Path format: auth/users/{recipient_key}/rights/{cap_id}
+        # Path format:
+        # - auth/users/{subject_id}/rights/{cap_id}
+        # - auth/tools/{subject_id}/rights/{cap_id}
         parts = path.strip('/').split('/')
         if len(parts) < 3:
+            print(f"Not enough parts: {path}")
             return False
 
-        recipient_key = parts[2]
+        subject_id = parts[2]
+        print(f"Found subject: {subject_id}")
 
-        # Verify signature
-        try:
-            signature = self.crypto.base64_decode(signature_b64)
-            # Extract raw public key from typed identifier
-            granter_key_bytes = extract_public_key(granter_public_key)
-
-            if not self.crypto.verify_capability_signature(
-                channel_id,
-                recipient_key,
-                capability_data,
-                signature,
-                granter_key_bytes
-            ):
-                return False
-        except Exception as e:
-            print(f"Signature verification failed: {e}")
-            return False
-        
         # Channel creator can grant anything
-        if granter_public_key == channel_id:
+        try:
+            if extract_public_key(granted_by) == extract_public_key(channel_id):
+                return True
+        except Exception:
+            return False
+
+        # Tools can write any capability for which they have write permission
+        # No superset check needed for tools - they just need the write capability
+        if self._is_tool(granted_by):
+            print(f"Granter {granted_by} is a tool - skipping superset check")
             return True
-        
+
+        # For users: verify they have superset of the capability they're granting
         # Load granter's capabilities
-        granter_caps = self._load_user_capabilities(channel_id, granter_public_key)
-        
+        granter_caps = self._load_user_capabilities(channel_id, granted_by)
+
         # Check if granter has permission to grant capabilities
         can_grant = False
         for cap in granter_caps:
@@ -513,43 +520,49 @@ class AuthorizationEngine:
                 cap,
                 "create",
                 "auth/users/{any}/rights/",
-                granter_public_key
+                granted_by
             ):
                 can_grant = True
                 break
-        
+
         if not can_grant:
+            print(f"Grantor {granted_by} can't grant capability")
             return False
-        
+
         # Check if granter has the capability they're trying to grant (subset check)
-        return self._has_capability_superset(
+        has_superset = self._has_capability_superset(
             granter_caps,
             [capability_data]
         )
+
+        if not has_superset:
+            print(f"Grantor {granted_by} lacks privileges of the requested capability")
+
+        return has_superset
 
     def verify_role_grant(
         self,
         channel_id: str,
         path: str,
         role_grant_data: dict,
-        granter_public_key: str,
-        signature_b64: str
+        granted_by: str
     ) -> bool:
         """
         Verify that a role grant is valid
 
         Checks:
-        1. Signature is valid
-        2. Granter exists (or is channel_id)
-        3. Role exists
-        4. Granter has superset of all capabilities in the role
+        1. Granter exists (or is channel_id)
+        2. Role exists
+        3. Granter has superset of all capabilities in the role
+
+        Note: The state entry signature is verified separately by the caller.
+        This method only validates the role grant logic.
 
         Args:
             channel_id: Typed channel identifier
             path: State path where role grant is being stored
             role_grant_data: The role grant being created
-            granter_public_key: Typed user identifier of granter
-            signature_b64: Base64-encoded signature
+            granted_by: Typed user identifier of granter
 
         Returns:
             True if grant is valid
@@ -560,23 +573,15 @@ class AuthorizationEngine:
         if len(parts) < 5:
             return False
 
-        # recipient_key = parts[2]  # Not currently used, would be for signature verification
         role_id = parts[4]
-
-        # Verify signature
-        # TODO: Need a verify_role_grant_signature method in crypto
-        # For now, trust that it was validated during state write
-        # Parameters role_grant_data and signature_b64 will be used when this is implemented
 
         # Channel creator can grant anything
         # Compare the underlying public keys (granter might be U_xxx while channel is C_xxx)
         try:
-            granter_bytes = extract_public_key(granter_public_key)
-            channel_bytes = extract_public_key(channel_id)
-            if granter_bytes == channel_bytes:
+            if extract_public_key(granted_by) == extract_public_key(channel_id):
                 return True
         except Exception:
-            pass  # If extraction fails, continue with normal checks
+            return False
 
         # Load all capabilities in this role
         role_cap_prefix = f"auth/roles/{role_id}/rights/"
@@ -584,6 +589,11 @@ class AuthorizationEngine:
 
         role_capabilities = []
         for cap_state in role_cap_states:
+            # Verify state entry signature first
+            if not self._verify_state_entry_signature(channel_id, cap_state):
+                print(f"Invalid state entry signature for role capability {cap_state.get('path', 'unknown')}")
+                continue
+
             try:
                 cap_decoded = base64.b64decode(cap_state["data"])
                 cap = json.loads(cap_decoded)
@@ -597,23 +607,23 @@ class AuthorizationEngine:
             return True
 
         # Load granter's capabilities (including their roles!)
-        granter_direct_caps = self._load_user_capabilities(channel_id, granter_public_key)
-        granter_role_caps = self._load_role_capabilities(channel_id, granter_public_key)
+        granter_direct_caps = self._load_user_capabilities(channel_id, granted_by)
+        granter_role_caps = self._load_role_capabilities(channel_id, granted_by)
         granter_all_caps = granter_direct_caps + granter_role_caps
 
         # Check if granter has permission to grant roles
-        can_grant = False
+        can_grant_roles = False
         for cap in granter_all_caps:
             if self._capability_grants_permission(
                 cap,
                 "create",
                 "auth/users/{any}/roles/",
-                granter_public_key
+                granted_by
             ):
-                can_grant = True
+                can_grant_roles = True
                 break
 
-        if not can_grant:
+        if not can_grant_roles:
             return False
 
         # Check if granter has superset of all role capabilities
@@ -834,6 +844,11 @@ class AuthorizationEngine:
 
         tool_capabilities = []
         for cap_state in tool_cap_states:
+            # Verify state entry signature first
+            if not self._verify_state_entry_signature(channel_id, cap_state):
+                print(f"Invalid state entry signature for tool capability {cap_state.get('path', 'unknown')}")
+                continue
+
             try:
                 cap_decoded = base64.b64decode(cap_state["data"])
                 cap = json.loads(cap_decoded)

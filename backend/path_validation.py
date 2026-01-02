@@ -119,14 +119,19 @@ def validate_capability_path(path: str) -> None:
         validate_capability_path("api/{self.id}")            # ❌ Invalid syntax
         validate_capability_path("users/{}")                 # ❌ Empty braces
     """
+    
+    print(f"Validating capability path: {path}")
+    
     # Normalize
     normalized = path.strip('/')
 
     if not normalized:
+        print("Capability path is empty")
         raise PathValidationError("Capability path cannot be empty")
 
     # Check each segment
     segments = normalized.split('/')
+    print("Found segments =", segments)
     for segment in segments:
         # Allow empty segments (from trailing slash)
         if segment == '':
@@ -136,12 +141,14 @@ def validate_capability_path(path: str) -> None:
             # Check for unknown wildcards
             if '{' in segment and '}' in segment:
                 if segment not in RESERVED_WILDCARDS:
+                    print(f"Unknown wildcard: {segment}")
                     raise PathValidationError(
                         f"Invalid capability path '{path}': Unknown wildcard '{segment}'. "
                         f"Allowed wildcards are: {', '.join(sorted(RESERVED_WILDCARDS))}"
                     )
 
             # Invalid characters
+            print(f"Invalid segment: {segment}")
             raise PathValidationError(
                 f"Invalid capability path '{path}': Segment '{segment}' contains invalid characters. "
                 f"Path segments must be either reserved wildcards or contain only "

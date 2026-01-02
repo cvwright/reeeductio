@@ -65,13 +65,15 @@ class SqlStateStore(StateStore):
 
             # State table - stores all channel state (members, capabilities, metadata)
             # Data is always stored as base64 string; interpretation is context-dependent
+            # Every state entry must be cryptographically signed
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS state (
                     channel_id TEXT NOT NULL,
                     path TEXT NOT NULL,
                     data TEXT NOT NULL,
-                    updated_by TEXT NOT NULL,
-                    updated_at INTEGER NOT NULL,
+                    signature TEXT NOT NULL,
+                    signed_by TEXT NOT NULL,
+                    signed_at INTEGER NOT NULL,
                     PRIMARY KEY (channel_id, path)
                 )
             """)
@@ -80,6 +82,24 @@ class SqlStateStore(StateStore):
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_state_channel
                 ON state(channel_id)
+            """)
+
+            # Tool usage table - tracks tool operation counts (NOT part of channel state)
+            # This is operational metadata maintained by the server
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tool_usage (
+                    channel_id TEXT NOT NULL,
+                    tool_id TEXT NOT NULL,
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    last_used_at INTEGER,
+                    PRIMARY KEY (channel_id, tool_id)
+                )
+            """)
+
+            # Create index for faster tool usage queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_tool_usage_channel
+                ON tool_usage(channel_id)
             """)
 
             conn.commit()
@@ -102,7 +122,7 @@ class SqlStateStore(StateStore):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(f"""
-                SELECT data, updated_by, updated_at
+                SELECT path, data, signature, signed_by, signed_at
                 FROM state
                 WHERE channel_id = {ph(0)} AND path = {ph(1)}
             """, (channel_id, path))
@@ -112,9 +132,11 @@ class SqlStateStore(StateStore):
                 return None
 
             result = {
+                "path": row["path"],
                 "data": row["data"],
-                "updated_by": row["updated_by"],
-                "updated_at": row["updated_at"]
+                "signature": row["signature"],
+                "signed_by": row["signed_by"],
+                "signed_at": row["signed_at"]
             }
 
             # Store in cache if present
@@ -129,10 +151,11 @@ class SqlStateStore(StateStore):
         channel_id: str,
         path: str,
         data: str,
-        updated_by: str,
-        updated_at: int
+        signature: str,
+        signed_by: str,
+        signed_at: int
     ) -> None:
-        """Set state value (data should be base64-encoded string)"""
+        """Set state value (data should be base64-encoded string, signature required)"""
         ph = self._get_placeholder
 
         with self.get_connection() as conn:
@@ -141,18 +164,18 @@ class SqlStateStore(StateStore):
             # Try to update first
             cursor.execute(f"""
                 UPDATE state
-                SET data = {ph(2)}, updated_by = {ph(3)}, updated_at = {ph(4)}
-                WHERE channel_id = {ph(0)} AND path = {ph(1)}
-            """, (channel_id, path, data, updated_by, updated_at))
+                SET data = {ph(0)}, signature = {ph(1)}, signed_by = {ph(2)}, signed_at = {ph(3)}
+                WHERE channel_id = {ph(4)} AND path = {ph(5)}
+            """, (data, signature, signed_by, signed_at, channel_id, path))
 
             # If no rows were updated, insert a new row
             if cursor.rowcount == 0:
-                placeholders = ", ".join([ph(i) for i in range(5)])
+                placeholders = ", ".join([ph(i) for i in range(6)])
                 cursor.execute(f"""
                     INSERT INTO state
-                    (channel_id, path, data, updated_by, updated_at)
+                    (channel_id, path, data, signature, signed_by, signed_at)
                     VALUES ({placeholders})
-                """, (channel_id, path, data, updated_by, updated_at))
+                """, (channel_id, path, data, signature, signed_by, signed_at))
 
         # Invalidate cache if present
         if self._cache is not None:
@@ -189,7 +212,7 @@ class SqlStateStore(StateStore):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(f"""
-                SELECT path, data, updated_by, updated_at
+                SELECT path, data, signature, signed_by, signed_at
                 FROM state
                 WHERE channel_id = {ph(0)} AND path LIKE {ph(1)}
                 ORDER BY path
@@ -200,8 +223,101 @@ class SqlStateStore(StateStore):
                 results.append({
                     "path": row["path"],
                     "data": row["data"],
-                    "updated_by": row["updated_by"],
-                    "updated_at": row["updated_at"]
+                    "signature": row["signature"],
+                    "signed_by": row["signed_by"],
+                    "signed_at": row["signed_at"]
                 })
 
             return results
+
+    def initialize_tool_usage(self, channel_id: str, tool_id: str) -> None:
+        """
+        Initialize tool usage tracking for a use-limited tool.
+        Creates a row with use_count=0.
+        """
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ", ".join([ph(i) for i in range(3)])
+            cursor.execute(f"""
+                INSERT INTO tool_usage
+                (channel_id, tool_id, use_count)
+                VALUES ({placeholders})
+            """, (channel_id, tool_id, 0))
+
+    def increment_tool_usage(self, channel_id: str, tool_id: str, timestamp: int) -> int:
+        """
+        Increment tool use count and return new count.
+
+        This is operational metadata (NOT part of channel state).
+        Used to track and enforce use_limit for tools.
+
+        NOTE: Assumes initialize_tool_usage has been called for this tool.
+
+        Args:
+            channel_id: Channel ID
+            tool_id: Tool ID (T_*)
+            timestamp: Current timestamp in milliseconds
+
+        Returns:
+            New use count after increment
+        """
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Update existing row (should always exist for use-limited tools)
+            # Note: Parameters must be in order they appear in SQL, not by ph() number
+            cursor.execute(f"""
+                UPDATE tool_usage
+                SET use_count = use_count + 1, last_used_at = {ph(0)}
+                WHERE channel_id = {ph(1)} AND tool_id = {ph(2)}
+            """, (timestamp, channel_id, tool_id))
+
+            if cursor.rowcount == 0:
+                raise ValueError(f"Tool usage tracking not initialized for {tool_id} in channel {channel_id}")
+
+            # Get the new count
+            cursor.execute(f"""
+                SELECT use_count
+                FROM tool_usage
+                WHERE channel_id = {ph(0)} AND tool_id = {ph(1)}
+            """, (channel_id, tool_id))
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"Failed to read tool usage after update for {tool_id}")
+            return row["use_count"]
+
+    def get_tool_usage(self, channel_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get tool usage statistics.
+
+        This is operational metadata (NOT part of channel state).
+
+        Args:
+            channel_id: Channel ID
+            tool_id: Tool ID (T_*)
+
+        Returns:
+            Dictionary with use_count and last_used_at, or None if not found
+        """
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT use_count, last_used_at
+                FROM tool_usage
+                WHERE channel_id = {ph(0)} AND tool_id = {ph(1)}
+            """, (channel_id, tool_id))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                "use_count": row["use_count"],
+                "last_used_at": row["last_used_at"]
+            }

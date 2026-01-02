@@ -76,9 +76,11 @@ class FirestoreStateStore(StateStore):
 
         data = doc.to_dict()
         return {
+            'path': data['path'],
             'data': data['data'],
-            'updated_by': data['updated_by'],
-            'updated_at': data['updated_at']
+            'signature': data['signature'],
+            'signed_by': data['signed_by'],
+            'signed_at': data['signed_at']
         }
 
     def set_state(
@@ -86,10 +88,11 @@ class FirestoreStateStore(StateStore):
         channel_id: str,
         path: str,
         data: str,
-        updated_by: str,
-        updated_at: int
+        signature: str,
+        signed_by: str,
+        signed_at: int
     ) -> None:
-        """Set state value in Firestore"""
+        """Set state value in Firestore (signature required)"""
         doc_id = self._encode_path(path)
         doc_ref = self.db.collection('channels').document(channel_id) \
                         .collection('state').document(doc_id)
@@ -97,8 +100,9 @@ class FirestoreStateStore(StateStore):
         doc_ref.set({
             'path': path,  # Keep original for querying
             'data': data,
-            'updated_by': updated_by,
-            'updated_at': updated_at
+            'signature': signature,
+            'signed_by': signed_by,
+            'signed_at': signed_at
         })
 
     def delete_state(self, channel_id: str, path: str) -> bool:
@@ -143,8 +147,86 @@ class FirestoreStateStore(StateStore):
             results.append({
                 'path': data['path'],
                 'data': data['data'],
-                'updated_by': data['updated_by'],
-                'updated_at': data['updated_at']
+                'signature': data['signature'],
+                'signed_by': data['signed_by'],
+                'signed_at': data['signed_at']
             })
 
         return results
+
+    def initialize_tool_usage(self, channel_id: str, tool_id: str) -> None:
+        """Initialize tool usage tracking for a use-limited tool."""
+        doc_ref = self.db.collection('channels').document(channel_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        doc_ref.set({
+            'use_count': 0,
+            'last_used_at': None
+        })
+
+    def increment_tool_usage(self, channel_id: str, tool_id: str, timestamp: int) -> int:
+        """
+        Increment tool use count and return new count using Firestore transaction.
+
+        This is operational metadata (NOT part of channel state).
+
+        Args:
+            channel_id: Channel ID
+            tool_id: Tool ID (T_*)
+            timestamp: Current timestamp in milliseconds
+
+        Returns:
+            New use count after increment
+        """
+        doc_ref = self.db.collection('channels').document(channel_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        @firestore.transactional
+        def update_in_transaction(transaction, doc_ref):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if snapshot.exists:
+                # Increment existing count
+                current_count = snapshot.get('use_count')
+                new_count = current_count + 1
+                transaction.update(doc_ref, {
+                    'use_count': new_count,
+                    'last_used_at': timestamp
+                })
+                return new_count
+            else:
+                # Create new record
+                transaction.set(doc_ref, {
+                    'use_count': 1,
+                    'last_used_at': timestamp
+                })
+                return 1
+
+        transaction = self.db.transaction()
+        return update_in_transaction(transaction, doc_ref)
+
+    def get_tool_usage(self, channel_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get tool usage statistics from Firestore.
+
+        This is operational metadata (NOT part of channel state).
+
+        Args:
+            channel_id: Channel ID
+            tool_id: Tool ID (T_*)
+
+        Returns:
+            Dictionary with use_count and last_used_at, or None if not found
+        """
+        doc_ref = self.db.collection('channels').document(channel_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        doc = doc_ref.get()
+        if not doc.exists:
+            return None
+
+        data = doc.to_dict()
+        return {
+            'use_count': data['use_count'],
+            'last_used_at': data.get('last_used_at')
+        }

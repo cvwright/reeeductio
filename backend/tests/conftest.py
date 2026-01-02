@@ -5,6 +5,9 @@ import sys
 import os
 import tempfile
 import shutil
+import base64
+import json
+import time
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -70,6 +73,10 @@ def state_store(temp_db_path):
     """Create a SqliteStateStore instance with temporary storage"""
     return SqliteStateStore(temp_db_path)
 
+@pytest.fixture
+def sqlite_state_store(temp_db_path):
+    """Create a SqliteStateStore instance with temporary storage"""
+    return SqliteStateStore(temp_db_path)
 
 @pytest.fixture
 def crypto():
@@ -115,13 +122,15 @@ def admin_keypair():
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
     public_key_bytes = public_key.public_bytes_raw()
+    user_id = encode_user_id(public_key_bytes)
 
     return {
         'private': private_key,
         'public': public_key,
         'public_bytes': public_key_bytes,
-        'user_id': encode_user_id(public_key_bytes),
-        'channel_id': encode_channel_id(public_key_bytes)
+        'user_id': user_id,
+        'channel_id': encode_channel_id(public_key_bytes),
+        'id': user_id
     }
 
 
@@ -131,14 +140,117 @@ def user_keypair():
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
     public_key_bytes = public_key.public_bytes_raw()
+    user_id = encode_user_id(public_key_bytes)
 
     return {
         'private': private_key,
         'public': public_key,
         'public_bytes': public_key_bytes,
-        'user_id': encode_user_id(public_key_bytes)
+        'user_id': user_id,
+        'id': user_id
     }
 
+
+def sign_state_entry(
+    channel_id: str,
+    path: str,
+    data: str,
+    signer_private_key,
+    signer_user_id: str,
+    signed_at: int
+) -> str:
+    """
+    Convenience function to create a signed state entry for tests.
+
+    Args:
+        channel_id: Channel identifier
+        path: State path
+        data: Base64-encoded state data
+        signer_private_key: Ed25519 private key of signer
+        signer_user_id: User ID of signer (must match private key's public key)
+        signed_at: Unix timestamp in milliseconds when entry was signed
+
+    Returns:
+        Dictionary with keys: data, signature, signed_by, signed_at
+
+    Raises:
+        ValueError: If signer_user_id doesn't match the private key's public key
+    """
+    from identifiers import extract_public_key
+
+    # Verify that signer_user_id matches the private key's public key
+    expected_public_key_bytes = signer_private_key.public_key().public_bytes_raw()
+    actual_public_key_bytes = extract_public_key(signer_user_id)
+
+    if expected_public_key_bytes != actual_public_key_bytes:
+        raise ValueError(
+            f"signer_user_id ({signer_user_id}) does not match the provided private key's public key"
+        )
+
+    # Create signature message: channel_id|path|data|signed_at
+    message = f"{channel_id}|{path}|{data}|{signed_at}".encode('utf-8')
+    signature_bytes = signer_private_key.sign(message)
+    signature = base64.b64encode(signature_bytes).decode('utf-8')
+
+    return signature
+
+
+def sign_and_store_state(
+    state_store,
+    channel_id: str,
+    path: str,
+    contents: object,
+    signer_private_key,
+    signer_user_id: str,
+    signed_at: int
+) -> None:
+    """
+    Convenience function to create a signed state entry and store it in the state store.
+
+    This combines create_signed_state_entry() and state_store.set_state() into a single call.
+
+    Args:
+        state_store: StateStore instance to store the entry in
+        channel_id: Channel identifier
+        path: State path
+        contents: JSON-compatible object
+        signer_private_key: Ed25519 private key of signer
+        signer_user_id: User ID of signer (must match private key's public key)
+        signed_at: Unix timestamp in milliseconds when entry was signed
+
+    Raises:
+        ValueError: If signer_user_id doesn't match the private key's public key
+    """
+    data_b64 = base64.b64encode(json.dumps(contents).encode()).decode()
+
+    signature = sign_state_entry(
+        channel_id,
+        path,
+        data_b64,
+        signer_private_key,
+        signer_user_id,
+        signed_at
+    )
+
+    print(f"Saving signed state in {path}")
+
+    state_store.set_state(
+        channel_id,
+        path,
+        data_b64,
+        signature,
+        signer_user_id,
+        signed_at
+    )
+
+def set_channel_state(channel, path, contents, token, keypair):
+        """
+        Convenience function to sign and set state in a Channel
+        """
+        data = CryptoUtils.base64_encode_object(contents)
+        timestamp = int(time.time() * 1000)
+        signature = sign_state_entry(channel.channel_id, path, data, keypair['private'], keypair['id'], timestamp)
+        channel.set_state(path, data, token, signature, keypair['id'], timestamp)
 
 # ============================================================================
 # Firestore Emulator Fixtures

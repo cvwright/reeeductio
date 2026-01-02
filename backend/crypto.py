@@ -7,6 +7,7 @@ Uses typed identifiers for all public keys and hashes.
 
 import hashlib
 import base64
+import json
 from typing import Optional
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
@@ -30,6 +31,11 @@ class CryptoUtils:
         """Decode base64 string to bytes"""
         return base64.b64decode(data)
     
+    @staticmethod
+    def base64_encode_object(obj: object) -> str:
+        """Encode JSON-compatible object to base64 string"""
+        return CryptoUtils.base64_encode(json.dumps(obj).encode())
+
     def verify_signature(
         self,
         message: bytes,
@@ -55,6 +61,7 @@ class CryptoUtils:
             key.verify(signature, message)
             return True
         except InvalidSignature:
+            print("Signature is invalid")
             return False
         except Exception as e:
             # Log unexpected errors
@@ -128,61 +135,6 @@ class CryptoUtils:
         message_bytes = tid.to_bytes()
         return self.verify_signature(message_bytes, signature, sender_public_key)
 
-    def compute_capability_signature_message(
-        self,
-        channel_id: str,
-        recipient_public_key: str,
-        op: str,
-        path: str,
-        granted_at: int
-    ) -> bytes:
-        """
-        Construct the message that should be signed for a capability
-        
-        Args:
-            channel_id: Channel identifier
-            recipient_public_key: Public key receiving the capability
-            op: Operation (read, create, write)
-            path: State path pattern
-            granted_at: Unix timestamp
-        
-        Returns:
-            Message bytes to sign
-        """
-        message = f"{channel_id}|{recipient_public_key}|{op}|{path}|{granted_at}"
-        return message.encode('utf-8')
-    
-    def verify_capability_signature(
-        self,
-        channel_id: str,
-        recipient_public_key: str,
-        capability: dict,
-        signature: bytes,
-        granter_public_key: bytes
-    ) -> bool:
-        """
-        Verify signature on a capability grant
-        
-        Args:
-            channel_id: Channel identifier
-            recipient_public_key: Public key receiving the capability
-            capability: Capability dict with 'op', 'path', 'granted_at'
-            signature: Signature bytes
-            granter_public_key: Public key of granter
-        
-        Returns:
-            True if signature is valid
-        """
-        message = self.compute_capability_signature_message(
-            channel_id,
-            recipient_public_key,
-            capability["op"],
-            capability["path"],
-            capability["granted_at"]
-        )
-        
-        return self.verify_signature(message, signature, granter_public_key)
-    
     @staticmethod
     def sha256_hash(data: bytes) -> bytes:
         """

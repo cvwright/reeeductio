@@ -15,7 +15,16 @@ Run tests:
     # Force testcontainers
     pytest backend/tests/test_firestore_stores.py --firestore-emulator=testcontainers
 """
+import sys
 import pytest
+from pathlib import Path
+
+# Add tests directory to path to import conftest
+sys.path.insert(0, str(Path(__file__).parent))
+
+import conftest
+sign_state_entry = conftest.sign_state_entry
+sign_and_store_state = conftest.sign_and_store_state
 
 # Import generic test functions
 from .test_state_storage import (
@@ -42,24 +51,24 @@ from .test_message_storage import (
 # State Storage Tests
 # ============================================================================
 
-def test_state_set_and_get(firestore_state_store, unique_channel_id):
+def test_state_set_and_get(firestore_state_store, unique_channel_id, admin_keypair):
     """Test basic state set and get operations"""
-    generic_state_set_and_get(firestore_state_store, unique_channel_id)
+    generic_state_set_and_get(firestore_state_store, unique_channel_id, admin_keypair)
 
 
-def test_state_update(firestore_state_store, unique_channel_id):
+def test_state_update(firestore_state_store, unique_channel_id, admin_keypair, user_keypair):
     """Test updating existing state"""
-    generic_state_update(firestore_state_store, unique_channel_id)
+    generic_state_update(firestore_state_store, unique_channel_id, admin_keypair, user_keypair)
 
 
-def test_state_delete(firestore_state_store, unique_channel_id):
+def test_state_delete(firestore_state_store, unique_channel_id, admin_keypair):
     """Test state deletion"""
-    generic_state_delete(firestore_state_store, unique_channel_id)
+    generic_state_delete(firestore_state_store, unique_channel_id, admin_keypair)
 
 
-def test_state_list_by_prefix(firestore_state_store, unique_channel_id):
+def test_state_list_by_prefix(firestore_state_store, unique_channel_id, admin_keypair):
     """Test listing state by prefix"""
-    generic_state_list_by_prefix(firestore_state_store, unique_channel_id)
+    generic_state_list_by_prefix(firestore_state_store, unique_channel_id, admin_keypair)
 
 
 def test_state_nonexistent(firestore_state_store, unique_channel_id):
@@ -67,9 +76,9 @@ def test_state_nonexistent(firestore_state_store, unique_channel_id):
     generic_state_nonexistent(firestore_state_store, unique_channel_id)
 
 
-def test_state_multiple_channels(firestore_state_store, unique_channel_id):
+def test_state_multiple_channels(firestore_state_store, unique_channel_id, admin_keypair):
     """Test state isolation between channels"""
-    generic_state_multiple_channels(firestore_state_store, unique_channel_id)
+    generic_state_multiple_channels(firestore_state_store, unique_channel_id, admin_keypair)
 
 
 # ============================================================================

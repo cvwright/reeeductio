@@ -120,14 +120,17 @@ class TokenResponse(BaseModel):
 
 class StateData(BaseModel):
     data: str = Field(..., description="Base64-encoded state data")
-    signature: Optional[str] = None
-    signed_by: Optional[str] = None
+    signature: str = Field(..., description="Ed25519 signature over (channel_id|path|data|signed_at)")
+    signed_by: str = Field(..., description="Typed user/tool identifier of signer")
+    signed_at: int = Field(..., description="Unix timestamp in milliseconds when entry was signed")
 
 
 class StateResponse(BaseModel):
+    path: str
     data: str
-    updated_at: int
-    updated_by: str
+    signature: str
+    signed_by: str
+    signed_at: int
 
 
 class MessagePost(BaseModel):
@@ -271,14 +274,15 @@ async def put_state(
             state_data.data,
             credentials.credentials,
             state_data.signature,
-            state_data.signed_by
+            state_data.signed_by,
+            state_data.signed_at
         )
         return {"path": path, "updated_at": updated_at}
     except ValueError as e:
         error_msg = str(e)
         if "permission" in error_msg.lower():
             raise HTTPException(status_code=403, detail=error_msg)
-        elif "required" in error_msg.lower() or "must be" in error_msg.lower():
+        elif "required" in error_msg.lower() or "must be" in error_msg.lower() or "invalid" in error_msg.lower() or "signature" in error_msg.lower():
             raise HTTPException(status_code=400, detail=error_msg)
         else:
             raise HTTPException(status_code=401, detail=error_msg)

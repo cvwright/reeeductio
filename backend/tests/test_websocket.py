@@ -9,10 +9,16 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from pathlib import Path
+
+# Add tests directory to path to import conftest
+sys.path.insert(0, str(Path(__file__).parent))
 
 from main import app, authenticate_websocket, channel_manager
+
+import conftest
+sign_state_entry = conftest.sign_state_entry
+sign_and_store_state = conftest.sign_and_store_state
 
 class TestWebSocketAuthentication:
     """Test WebSocket authentication"""
@@ -26,9 +32,10 @@ class TestWebSocketAuthentication:
         token = jwt_data['token']
 
         result = await authenticate_websocket(channel_id, token)
+        print("Got websocket result =", result)
 
         assert result['channel_id'] == channel_id
-        assert result['public_key'] == admin_keypair['user_id']
+        assert result['id'] == admin_keypair['user_id']
 
     @pytest.mark.asyncio
     async def test_authenticate_websocket_no_token(self):
@@ -95,17 +102,16 @@ class TestWebSocketEndpoint:
 
         # Add user as member
         member_data = {
-            "public_key": user_id,
-            "added_at": 12345000,
-            "added_by": user_id
+            "user_id": user_id
         }
-        member_b64 = base64.b64encode(json.dumps(member_data).encode()).decode()
-        state_store.set_state(
-            channel_id,
-            f"members/{user_id}",
-            member_b64,
-            updated_by=user_id,
-            updated_at=12345000
+        sign_and_store_state(
+            state_store=state_store,
+            channel_id=channel_id,
+            path=f"auth/users/{user_id}",
+            contents=member_data,
+            signer_private_key=admin_keypair['private'],
+            signer_user_id=admin_keypair['user_id'],
+            signed_at=12345000
         )
 
         # Create JWT token
@@ -131,17 +137,16 @@ class TestWebSocketEndpoint:
 
         # Add user as member
         member_data = {
-            "public_key": user_id,
-            "added_at": 12345000,
-            "added_by": user_id
+            "user_id": user_id
         }
-        member_b64 = base64.b64encode(json.dumps(member_data).encode()).decode()
-        state_store.set_state(
-            channel_id,
-            f"members/{user_id}",
-            member_b64,
-            updated_by=user_id,
-            updated_at=12345000
+        sign_and_store_state(
+            state_store=state_store,
+            channel_id=channel_id,
+            path=f"auth/users/{user_id}",
+            contents=member_data,
+            signer_private_key=admin_keypair['private'],
+            signer_user_id=admin_keypair['user_id'],
+            signed_at=12345000
         )
 
         # Create JWT token
@@ -188,42 +193,6 @@ class TestWebSocketMessageBroadcasting:
         channel_id = admin_keypair['channel_id']
         admin_id = admin_keypair['user_id']
         admin_private = admin_keypair['private']
-
-        # Setup admin member and capabilities
-        member_data = {
-            "public_key": admin_id,
-            "added_at": 12345000,
-            "added_by": admin_id
-        }
-        member_b64 = base64.b64encode(json.dumps(member_data).encode()).decode()
-        state_store.set_state(
-            channel_id,
-            f"members/{admin_id}",
-            member_b64,
-            updated_by=admin_id,
-            updated_at=12345000
-        )
-
-        # Grant admin write capability
-        admin_cap = {
-            "op": "write",
-            "path": "{any}",
-            "granted_by": admin_id,
-            "granted_at": 12345000
-        }
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, admin_id, "write", "{any}", 12345000
-        )
-        admin_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-
-        admin_cap_b64 = base64.b64encode(json.dumps(admin_cap).encode()).decode()
-        state_store.set_state(
-            channel_id,
-            f"auth/users/{admin_id}/rights/admin",
-            admin_cap_b64,
-            updated_by=admin_id,
-            updated_at=12345000
-        )
 
         # Create mock WebSocket connections
         ws1 = AsyncMock(spec=WebSocket)

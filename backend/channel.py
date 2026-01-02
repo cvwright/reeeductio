@@ -88,12 +88,12 @@ class Channel:
     # Authentication Operations
     # ========================================================================
 
-    def create_challenge(self, public_key: str, expiry_seconds: int = 300) -> Dict[str, Any]:
+    def create_challenge(self, member_id: str, expiry_seconds: int = 300) -> Dict[str, Any]:
         """
         Create an authentication challenge for a user or tool.
 
         Args:
-            public_key: User or tool public key identifier (U_* or T_*)
+            member_id: User or tool public key identifier (U_* or T_*)
             expiry_seconds: Challenge validity in seconds
 
         Returns:
@@ -103,7 +103,7 @@ class Channel:
         challenge = self.crypto.base64_encode(challenge_bytes)
         expires_at = int(time.time() * 1000) + (expiry_seconds * 1000)
 
-        challenge_key = public_key
+        challenge_key = member_id
         self.challenges[challenge_key] = {
             "challenge": challenge,
             "expires_at": expires_at
@@ -116,7 +116,7 @@ class Channel:
 
     def verify_challenge(
         self,
-        public_key: str,
+        member_id: str,
         challenge: str,
         signature: str
     ) -> bool:
@@ -128,7 +128,7 @@ class Channel:
         their capabilities (no ambient authority).
 
         Args:
-            public_key: User or tool public key identifier (U_* or T_*)
+            member_id: User or tool public key identifier (U_* or T_*)
             challenge: The challenge string to verify
             signature: Base64-encoded signature of the challenge
 
@@ -138,7 +138,7 @@ class Channel:
         Raises:
             ValueError: If challenge not found, expired, or signature invalid
         """
-        challenge_key = public_key
+        challenge_key = member_id
 
         # Check if challenge exists
         if challenge_key not in self.challenges:
@@ -157,7 +157,7 @@ class Channel:
 
         # Extract public key bytes and verify signature
         try:
-            user_pubkey_bytes = extract_public_key(public_key)
+            user_pubkey_bytes = extract_public_key(member_id)
         except Exception as e:
             raise ValueError(f"Invalid user identifier: {e}")
 
@@ -168,7 +168,7 @@ class Channel:
             raise ValueError("Invalid signature")
 
         # Check if user is a member of this channel
-        if not self.is_member(public_key):
+        if not self.is_member(member_id):
             raise ValueError("Not a member of this channel")
 
         # Clean up challenge
@@ -176,7 +176,7 @@ class Channel:
 
         return True
 
-    def create_jwt(self, public_key: str) -> dict:
+    def create_jwt(self, member_id: str) -> dict:
         """
         Create a JWT token for an authenticated user or tool.
 
@@ -184,7 +184,7 @@ class Channel:
         but their permissions are still limited by their capabilities.
 
         Args:
-            public_key: User or tool public key identifier (U_* or T_*)
+            member_id: User or tool public key identifier (U_* or T_*)
 
         Returns:
             Dictionary with token and expires_at (in milliseconds)
@@ -200,7 +200,7 @@ class Channel:
 
         payload = {
             "channel_id": self.channel_id,
-            "public_key": public_key,
+            "id": member_id,
             "iat": now_seconds,
             "exp": expiry_seconds
         }
@@ -304,10 +304,10 @@ class Channel:
             raise ValueError(f"Invalid path: {e}")
 
         # Authenticate
-        user = self.authenticate_request(token)
+        member = self.authenticate_request(token)
 
         # Check read permission
-        if not self.check_permission(user["public_key"], "read", path):
+        if not self.check_permission(member["id"], "read", path):
             raise ValueError("No read permission")
 
         # Get state
@@ -322,24 +322,29 @@ class Channel:
         path: str,
         data: str,
         token: str,
-        signature: Optional[str] = None,
-        signed_by: Optional[str] = None
+        signature: str,
+        signed_by: str,
+        signed_at: int
     ) -> int:
         """
         Set state value with authentication and authorization.
+
+        All state writes must be cryptographically signed. The signature is verified
+        before the state is stored.
 
         Args:
             path: State path to set
             data: Base64-encoded state data
             token: JWT authentication token
-            signature: Optional signature for capability grants
-            signed_by: Optional signer ID for capability grants
+            signature: Ed25519 signature over (path + data + signed_at) - REQUIRED
+            signed_by: Typed user/tool identifier of signer - REQUIRED
+            signed_at: Unix timestamp in milliseconds when entry was signed - REQUIRED
 
         Returns:
             Timestamp when state was updated (milliseconds)
 
         Raises:
-            ValueError: If auth fails, permission denied, or validation fails
+            ValueError: If auth fails, permission denied, validation fails, or signature invalid
             PathValidationError: If path contains invalid characters or wildcards
         """
         # VALIDATE PATH FIRST - before authentication or authorization
@@ -350,21 +355,44 @@ class Channel:
             raise ValueError(f"Invalid path: {e}")
 
         # Authenticate
-        user = self.authenticate_request(token)
+        member = self.authenticate_request(token)
+        member_id = member["id"]
+
+        # Check tool use limit BEFORE processing (returns True if usage should be tracked)
+        should_track_usage = self._check_tool_limit(member_id)
 
         # Check if state already exists
         existing = self.state_store.get_state(self.channel_id, path)
         operation = "write" if existing else "create"
 
         # Check permission
-        if not self.check_permission(user["public_key"], operation, path):
+        if not self.check_permission(member_id, operation, path):
             raise ValueError(f"No {operation} permission for path: {path}")
 
-        # For capability paths, validate signature
-        if self.is_capability_path(path):
-            if not signature or not signed_by:
-                raise ValueError("Signature required for capability grants")
+        # Validate signature on state entry (REQUIRED for all state writes)
+        if not signature or not signed_by:
+            raise ValueError("Signature and signed_by are required for all state writes")
 
+        if signed_at is None:
+            raise ValueError("signed_at is required for all state writes")
+
+        # Verify signature over (channel_id | path | data | signed_at)
+        # Including channel_id prevents signature replay attacks across different channels
+        # Using | as field separator prevents confusion attacks
+        message_to_sign = '|'.join([
+            self.channel_id,
+            path,
+            data,
+            str(signed_at)
+        ]).encode('utf-8')
+        signature_bytes = self.crypto.base64_decode(signature)
+        signer_public_key = extract_public_key(signed_by)
+
+        if not self.crypto.verify_signature(message_to_sign, signature_bytes, signer_public_key):
+            raise ValueError("Invalid state entry signature")
+
+        # For capability paths, validate capability structure
+        if self.is_capability_path(path):
             # Decode and validate capability
             import base64
             import json
@@ -374,15 +402,14 @@ class Channel:
             except Exception as e:
                 raise ValueError(f"Capability grants must be base64-encoded JSON objects: {e}")
 
-            # Verify the capability grant
-            if not self.verify_capability_grant(path, capability_dict, signed_by, signature):
+            # Verify the capability grant (privilege escalation check for users)
+            print("Verifying capability grant")
+            if not self.verify_capability_grant(path, capability_dict, signed_by):
+                print("Capability grant verification failed")
                 raise ValueError("Invalid capability grant or privilege escalation")
 
-        # For role grant paths, validate signature
+        # For role grant paths, validate role grant structure
         if self.authz.is_role_grant_path(path):
-            if not signature or not signed_by:
-                raise ValueError("Signature required for role grants")
-
             # Decode and validate role grant
             import base64
             import json
@@ -405,20 +432,38 @@ class Channel:
                     raise ValueError(f"Role grant role_id mismatch: path has '{path_role_id}' but data has '{role_grant_dict.get('role_id')}'")
 
             # Verify the role grant (subset checking)
-            if not self.authz.verify_role_grant(self.channel_id, path, role_grant_dict, signed_by, signature):
+            if not self.authz.verify_role_grant(self.channel_id, path, role_grant_dict, signed_by):
                 raise ValueError("Invalid role grant or privilege escalation")
 
-        # Store state
-        now = int(time.time() * 1000)
+        # Store state with signature
         self.state_store.set_state(
             self.channel_id,
             path,
             data,
-            user["public_key"],
-            now
+            signature,
+            signed_by,
+            signed_at
         )
 
-        return now
+        # If creating a use-limited tool, initialize usage tracking
+        if path.startswith("auth/tools/") and path.count('/') == 2:
+            # This is a tool definition (not a capability under the tool)
+            import base64
+            import json
+            try:
+                tool_def = json.loads(base64.b64decode(data))
+                if tool_def.get('use_limit') is not None:
+                    # Tool has use_limit, initialize tracking
+                    tool_id = path.split('/')[-1]
+                    self.state_store.initialize_tool_usage(self.channel_id, tool_id)
+            except Exception:
+                pass  # Invalid JSON, will be caught elsewhere
+
+        # Increment tool usage after successful write (only if tool has use_limit)
+        if should_track_usage:
+            self._increment_tool_usage(member_id)
+
+        return signed_at
 
     def delete_state(self, path: str, token: str) -> None:
         """
@@ -440,9 +485,10 @@ class Channel:
 
         # Authenticate
         user = self.authenticate_request(token)
+        print("Got user = ", user)
 
         # Check write permission for deletion
-        if not self.check_permission(user["public_key"], "write", path):
+        if not self.check_permission(user["id"], "write", path):
             raise ValueError("No delete permission")
 
         # Delete state
@@ -489,6 +535,9 @@ class Channel:
         user = self.authenticate_request(token)
         sender = user["public_key"]
 
+        # Check tool use limit BEFORE processing (returns True if usage should be tracked)
+        should_track_usage = self._check_tool_limit(sender)
+
         # Check create permission
         if not self.check_permission(sender, "create", f"topics/{topic_id}/messages/"):
             raise ValueError("No post permission")
@@ -527,6 +576,10 @@ class Channel:
             signature=signature,
             server_timestamp=server_timestamp
         )
+
+        # Increment tool usage after successful write (only if tool has use_limit)
+        if should_track_usage:
+            self._increment_tool_usage(sender)
 
         # Broadcast to WebSocket subscribers
         message_dict = {
@@ -633,23 +686,21 @@ class Channel:
         self,
         path: str,
         capability_dict: dict,
-        signed_by: str,
-        signature: str
+        signed_by: str
     ) -> bool:
         """Verify a capability grant is valid"""
         return self.authz.verify_capability_grant(
             self.channel_id,
             path,
             capability_dict,
-            signed_by,
-            signature
+            signed_by
         )
 
     def is_capability_path(self, path: str) -> bool:
         """Check if path is a capability path"""
         return self.authz.is_capability_path(path)
 
-    def is_member(self, user_id: str) -> bool:
+    def is_member(self, member_id: str) -> bool:
         """
         Check if user or tool is a member of this channel.
 
@@ -660,17 +711,19 @@ class Channel:
             True if identifier is the channel owner, a member, or a registered tool
         """
         # Channel creator is always a member
-        if user_id == self.channel_id:
+        member_public_key = extract_public_key(member_id)
+        channel_public_key = extract_public_key(self.channel_id)
+        if member_public_key == channel_public_key:
             return True
 
         # Check if it's a tool
-        if user_id.startswith('T'):
-            tool = self.state_store.get_state(self.channel_id, f"auth/tools/{user_id}")
+        if member_id.startswith('T'):
+            tool = self.state_store.get_state(self.channel_id, f"auth/tools/{member_id}")
             return tool is not None
 
-        # Check if it's a regular member
-        member = self.state_store.get_state(self.channel_id, f"members/{user_id}")
-        return member is not None
+        # Check if it's a regular user
+        user = self.state_store.get_state(self.channel_id, f"auth/users/{member_id}")
+        return user is not None
 
     def is_channel_admin(self, user_id: str) -> bool:
         """
@@ -683,6 +736,74 @@ class Channel:
             True if user is the channel owner (channel_id matches user_id)
         """
         return user_id == self.channel_id
+
+    def _check_tool_limit(self, member_id: str) -> bool:
+        """
+        Check if tool has exceeded use limit.
+
+        This is called BEFORE a write operation for tools only.
+        Regular users are not subject to use limits.
+
+        Args:
+            member_id: User or tool identifier
+
+        Returns:
+            True if the tool has a use_limit (and usage should be tracked), False otherwise
+
+        Raises:
+            ValueError: If tool has exceeded use limit or tool not found
+        """
+        # Only check limits for tools (T_*)
+        if not member_id.startswith('T'):
+            return False
+        
+        tool_id = member_id
+
+        # Get tool definition from state
+        tool_data = self.state_store.get_state(self.channel_id, f"auth/tools/{tool_id}")
+        if not tool_data:
+            raise ValueError(f"Tool {tool_id} not found in channel")
+
+        # Check if tool has use_limit
+        import base64
+        import json
+        try:
+            tool_def = json.loads(base64.b64decode(tool_data['data']))
+        except Exception as e:
+            raise ValueError(f"Invalid tool definition for {tool_id}: {e}")
+
+        use_limit = tool_def.get('use_limit')
+        if use_limit is None:
+            # No limit set - unlimited uses allowed, don't track
+            return False
+
+        # Get current usage
+        usage = self.state_store.get_tool_usage(self.channel_id, tool_id)
+        current_count = usage['use_count'] if usage else 0
+
+        # Check limit
+        if current_count >= use_limit:
+            raise ValueError(f"Tool {tool_id} has exceeded use limit ({use_limit})")
+
+        # Tool has a limit and hasn't exceeded it - track this use
+        return True
+
+    def _increment_tool_usage(self, user_public_key: str) -> None:
+        """
+        Increment tool usage counter after a successful write operation.
+
+        This is called AFTER a write operation succeeds for tools only.
+        Regular users do not have usage tracked.
+
+        Args:
+            user_public_key: User or tool public key
+        """
+        # Only track usage for tools (T_*)
+        if not user_public_key.startswith('T'):
+            return
+
+        now = int(time.time() * 1000)
+        self.state_store.increment_tool_usage(self.channel_id, user_public_key, now)
 
     # ========================================================================
     # Blob Management
@@ -803,6 +924,9 @@ class Channel:
         if not self.blob_store:
             raise ValueError("Blob store not configured for this channel")
 
+        # Check tool use limit BEFORE processing (returns True if usage should be tracked)
+        should_track_usage = self._check_tool_limit(user_id)
+
         # Authorize upload
         self.authorize_blob_upload(user_id, token)
 
@@ -813,6 +937,10 @@ class Channel:
 
         # Store blob with ownership metadata
         self.blob_store.add_blob(blob_id, blob_data, self.channel_id, user_id)
+
+        # Increment tool usage after successful write (only if tool has use_limit)
+        if should_track_usage:
+            self._increment_tool_usage(user_id)
 
         return {
             "blob_id": blob_id,

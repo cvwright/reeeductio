@@ -8,12 +8,23 @@ They can only perform actions explicitly granted via capabilities.
 import pytest
 import base64
 import json
+import sys
+import time
+from pathlib import Path
+
+# Add tests directory to path to import conftest
+sys.path.insert(0, str(Path(__file__).parent))
+
 from authorization import AuthorizationEngine
 from sqlite_state_store import SqliteStateStore
 from crypto import CryptoUtils
-from identifiers import encode_tool_id, encode_user_id, extract_public_key
+from identifiers import encode_tool_id, encode_user_id, encode_channel_id, extract_public_key
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
+import conftest
+sign_state_entry = conftest.sign_state_entry
+sign_and_store_state = conftest.sign_and_store_state
+set_channel_state = conftest.set_channel_state
 
 
 @pytest.fixture
@@ -39,7 +50,8 @@ def tool_keypair():
         'private': private_key,
         'public': public_key,
         'public_bytes': public_bytes,
-        'tool_id': tool_id
+        'tool_id': tool_id,
+        'id': tool_id
     }
 
 
@@ -69,12 +81,14 @@ class TestToolNoAmbientAuthority:
 
         # Create some state
         state_store = SqliteStateStore(temp_db_path)
-        state_store.set_state(
-            channel_id,
-            "test/data",
-            base64.b64encode(b"secret").decode(),
-            admin_keypair['user_id'],
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path="test/data",
+            contents={"secret": "12345"},
+            signer_private_key=admin_keypair['private'],
+            signer_user_id=admin_keypair['user_id'],
+            signed_at=123456789,
+            state_store=state_store
         )
 
         # Tool has NO capabilities - should not be able to read
@@ -113,24 +127,18 @@ class TestToolWithCapabilities:
         # Grant tool capability to create user entries
         tool_cap = {
             "op": "create",
-            "path": "auth/users/{any}",
-            "granted_by": admin_id,
-            "granted_at": 1234567890
+            "path": "auth/users/{any}"
         }
 
-        # Sign capability (recipient is the tool_id)
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, tool_id, tool_cap["op"], tool_cap["path"], tool_cap["granted_at"]
-        )
-        tool_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-
         # Store capability for tool
-        state_store.set_state(
-            channel_id,
-            f"auth/tools/{tool_id}/rights/cap_create_users",
-            base64.b64encode(json.dumps(tool_cap).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}/rights/cap_create_users",
+            contents=tool_cap,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=123456789,
+            state_store=state_store
         )
 
         # Tool should now have permission to create users
@@ -149,22 +157,16 @@ class TestToolWithCapabilities:
         # Grant tool capability to create user entries ONLY
         tool_cap = {
             "op": "create",
-            "path": "auth/users/{any}",
-            "granted_by": admin_id,
-            "granted_at": 1234567890
+            "path": "auth/users/{any}"
         }
-
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, tool_id, tool_cap["op"], tool_cap["path"], tool_cap["granted_at"]
-        )
-        tool_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-
-        state_store.set_state(
-            channel_id,
-            f"auth/tools/{tool_id}/rights/cap_create_users",
-            base64.b64encode(json.dumps(tool_cap).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}/rights/cap_create_users",
+            contents=tool_cap,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=123456789,
+            state_store=state_store
         )
 
         # Tool can create users
@@ -189,55 +191,46 @@ class TestToolWithCapabilities:
         # Create a "user" role first
         user_role = {
             "role_id": "user",
-            "description": "Standard user role",
-            "created_by": admin_id,
-            "created_at": 1234567890,
-            "signature": "fake_signature"
+            "description": "Standard user role"
         }
-        state_store.set_state(
-            channel_id,
-            "auth/roles/user",
-            base64.b64encode(json.dumps(user_role).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path="auth/roles/user",
+            contents=user_role,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
         )
 
         # Grant tool capability to create user entries (not deeper paths!)
         tool_cap1 = {
             "op": "create",
-            "path": "auth/users/{any}",
-            "granted_by": admin_id,
-            "granted_at": 1234567890
+            "path": "auth/users/{any}"
         }
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, tool_id, tool_cap1["op"], tool_cap1["path"], tool_cap1["granted_at"]
-        )
-        tool_cap1["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-        state_store.set_state(
-            channel_id,
-            f"auth/tools/{tool_id}/rights/cap_create_users",
-            base64.b64encode(json.dumps(tool_cap1).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}/rights/cap_create_users",
+            contents=tool_cap1,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
         )
 
         # Grant tool capability to assign "user" role
         tool_cap2 = {
             "op": "create",
-            "path": "auth/users/{any}/roles/user",
-            "granted_by": admin_id,
-            "granted_at": 1234567890
+            "path": "auth/users/{any}/roles/user"
         }
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, tool_id, tool_cap2["op"], tool_cap2["path"], tool_cap2["granted_at"]
-        )
-        tool_cap2["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-        state_store.set_state(
-            channel_id,
-            f"auth/tools/{tool_id}/rights/cap_grant_user_role",
-            base64.b64encode(json.dumps(tool_cap2).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}/rights/cap_grant_user_role",
+            contents=tool_cap2,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
         )
 
         # Tool can create users
@@ -274,9 +267,7 @@ class TestToolCreationValidation:
         # Valid: tool_id matches path
         tool_data_valid = {
             "tool_id": tool_id,
-            "description": "Test tool",
-            "created_by": admin_id,
-            "created_at": 1234567890
+            "description": "Test tool"
         }
         assert authz.verify_tool_creation(
             channel_id,
@@ -289,9 +280,7 @@ class TestToolCreationValidation:
         # Invalid: tool_id mismatch
         tool_data_invalid = {
             "tool_id": "T_wrongid",
-            "description": "Test tool",
-            "created_by": admin_id,
-            "created_at": 1234567890
+            "description": "Test tool"
         }
         assert not authz.verify_tool_creation(
             channel_id,
@@ -309,9 +298,7 @@ class TestToolCreationValidation:
 
         tool_data = {
             "tool_id": tool_id,
-            "description": "Test tool",
-            "created_by": admin_id,
-            "created_at": 1234567890
+            "description": "Test tool"
         }
 
         # Channel creator can create tools
@@ -328,12 +315,12 @@ class TestToolCreationValidation:
         channel_id = admin_keypair['channel_id']
         user_id = user_keypair['user_id']
         tool_id = tool_keypair['tool_id']
+        admin_id = admin_keypair['user_id']
+        admin_private = admin_keypair['private']
 
         tool_data = {
             "tool_id": tool_id,
-            "description": "Test tool",
-            "created_by": user_id,
-            "created_at": 1234567890
+            "description": "Test tool"
         }
 
         # User without permission cannot create tools
@@ -351,21 +338,16 @@ class TestToolCreationValidation:
 
         user_cap = {
             "op": "create",
-            "path": "auth/tools/{any}",
-            "granted_by": admin_keypair['user_id'],
-            "granted_at": 1234567890
+            "path": "auth/tools/{any}"
         }
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, user_id, user_cap["op"], user_cap["path"], user_cap["granted_at"]
-        )
-        user_cap["signature"] = crypto.base64_encode(admin_keypair['private'].sign(cap_msg))
-
-        state_store.set_state(
-            channel_id,
-            f"auth/users/{user_id}/rights/cap_create_tools",
-            base64.b64encode(json.dumps(user_cap).encode()).decode(),
-            admin_keypair['user_id'],
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/users/{user_id}/rights/cap_create_tools",
+            contents=user_cap,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
         )
 
         # Now user can create tools
@@ -384,6 +366,7 @@ class TestToolCreationValidation:
         user_id = user_keypair['user_id']
         tool_id = tool_keypair['tool_id']
         admin_private = admin_keypair['private']
+        user_private = user_keypair['private']
 
         state_store = SqliteStateStore(temp_db_path)
         crypto = CryptoUtils()
@@ -391,75 +374,67 @@ class TestToolCreationValidation:
         # Give user permission to create tool entries
         user_cap = {
             "op": "create",
-            "path": "auth/tools/{any}",
-            "granted_by": admin_id,
-            "granted_at": 1234567890
+            "path": "auth/tools/{any}"
         }
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, user_id, user_cap["op"], user_cap["path"], user_cap["granted_at"]
-        )
-        user_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-        state_store.set_state(
-            channel_id,
-            f"auth/users/{user_id}/rights/cap_create_tools",
-            base64.b64encode(json.dumps(user_cap).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/users/{user_id}/rights/cap_create_tools",
+            contents=user_cap,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
         )
 
         # Give user only read permission
         user_read_cap = {
             "op": "read",
-            "path": "{any}",
-            "granted_by": admin_id,
-            "granted_at": 1234567890
+            "path": "{any}"
         }
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, user_id, user_read_cap["op"], user_read_cap["path"], user_read_cap["granted_at"]
-        )
-        user_read_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-        state_store.set_state(
-            channel_id,
-            f"auth/users/{user_id}/rights/cap_read",
-            base64.b64encode(json.dumps(user_read_cap).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/users/{user_id}/rights/cap_read",
+            contents=user_read_cap,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
         )
 
         # Create tool definition
-        tool_data = {
+        tool_info = {
             "tool_id": tool_id,
-            "description": "Privilege escalation attempt",
-            "created_by": user_id,
-            "created_at": 1234567890
+            "description": "Privilege escalation attempt"
         }
-
-        # Add write capability to the tool (user doesn't have write!)
-        tool_write_cap = {
-            "op": "write",
-            "path": "{any}",
-            "granted_by": admin_id,  # Fake - user trying to escalate
-            "granted_at": 1234567890
-        }
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, tool_id, tool_write_cap["op"], tool_write_cap["path"], tool_write_cap["granted_at"]
-        )
-        tool_write_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-        state_store.set_state(
-            channel_id,
-            f"auth/tools/{tool_id}/rights/cap_write",
-            base64.b64encode(json.dumps(tool_write_cap).encode()).decode(),
-            admin_id,  # Would be validated separately
-            1234567890
-        )
-
-        # User should NOT be able to create this tool - it has write capability but user only has read
-        assert not authz.verify_tool_creation(
+        # User SHOULD be able to create the bare tool with no capabilities
+        assert authz.verify_tool_creation(
             channel_id,
             f"auth/tools/{tool_id}",
-            tool_data,
+            tool_info,
             user_id,
             "fake_signature"
+        )
+        # Actually create the bare tool (as the user, not the admin)
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}",
+            contents=tool_info,
+            signer_private_key=user_private,
+            signer_user_id=user_id,
+            signed_at=1234567890,
+            state_store=state_store
+        )
+
+        # Adding write capability to the tool should fail (user doesn't have write!)
+        tool_write_cap = {
+            "op": "write",
+            "path": "{any}"
+        }
+        assert not authz.verify_capability_grant(
+            channel_id,
+            f"auth/tools/{tool_id}/rights/write_anything",
+            tool_write_cap,
+            user_id
         )
 
 
@@ -490,52 +465,34 @@ class TestToolAuthentication:
             jwt_secret="test_secret_key"
         )
 
-        # Add admin as member
-        member_data = {
-            "public_key": admin_id,
-            "added_at": 1234567890,
-            "added_by": admin_id
-        }
-        state_store.set_state(
-            channel_id,
-            f"members/{admin_id}",
-            base64.b64encode(json.dumps(member_data).encode()).decode(),
-            admin_id,
-            1234567890
-        )
-
-        # Create tool in state
-        tool_data = {
+        # Create tool in state, signed by admin
+        tool_info = {
             "tool_id": tool_id,
-            "description": "Test camera tool",
-            "created_by": admin_id,
-            "created_at": 1234567890
+            "description": "Test camera tool"
         }
-        state_store.set_state(
-            channel_id,
-            f"auth/tools/{tool_id}",
-            base64.b64encode(json.dumps(tool_data).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}",
+            contents=tool_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=channel.state_store
         )
 
         # Grant tool capability to create messages
         tool_cap = {
             "op": "create",
-            "path": "messages/{...}",
-            "granted_by": admin_id,
-            "granted_at": 1234567890
+            "path": "messages/{...}"
         }
-        cap_msg = crypto.compute_capability_signature_message(
-            channel_id, tool_id, tool_cap["op"], tool_cap["path"], tool_cap["granted_at"]
-        )
-        tool_cap["signature"] = crypto.base64_encode(admin_private.sign(cap_msg))
-        state_store.set_state(
-            channel_id,
-            f"auth/tools/{tool_id}/rights/cap_messages",
-            base64.b64encode(json.dumps(tool_cap).encode()).decode(),
-            admin_id,
-            1234567890
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}/rights/cap_messages",
+            contents=tool_cap,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=channel.state_store
         )
 
         # Test authentication flow
@@ -595,3 +552,341 @@ class TestToolAuthentication:
         with pytest.raises(ValueError) as exc_info:
             channel.verify_challenge(tool_id, challenge, signature_b64)
         assert "not a member" in str(exc_info.value).lower()
+
+
+class TestToolUseLimiting:
+    """Test tool use-count limiting functionality"""
+
+    @staticmethod
+    def authenticate_with_challenge(channel, user_id, private_key):
+        """Helper to do full challenge/verify/JWT flow and return token"""
+        challenge_response = channel.create_challenge(user_id)
+        challenge = challenge_response['challenge']
+
+        message = challenge.encode('utf-8')
+        signature = private_key.sign(message)
+        signature_b64 = base64.b64encode(signature).decode()
+
+        channel.verify_challenge(user_id, challenge, signature_b64)
+
+        token_response = channel.create_jwt(user_id)
+        return token_response['token']
+
+    def test_unlimited_tool_can_write_multiple_times(self, temp_db_path, admin_keypair, tool_keypair, crypto):
+        """Tools without use_limit can write unlimited times"""
+        from channel import Channel
+        from sqlite_state_store import SqliteStateStore
+        from sqlite_message_store import SqliteMessageStore
+
+        admin_private = admin_keypair['private']
+        admin_id = admin_keypair['user_id']
+        channel_id = encode_channel_id(admin_keypair['public_bytes'])
+
+        state_store = SqliteStateStore(temp_db_path)
+        message_store = SqliteMessageStore(temp_db_path)
+
+        tool_id = tool_keypair['tool_id']
+        tool_private = tool_keypair['private']
+        tkp = {
+            'id': tool_id,
+            'private': tool_private
+        }
+
+        # Create tool WITHOUT use_limit
+        tool_info = {
+            "tool_id": tool_id,
+            "description": "Unlimited test tool"
+            # No use_limit field
+        }
+        # Creator adds tool to channel
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}",
+            contents=tool_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
+        )
+
+        # Grant tool permission to write to test paths
+        cap_info = {
+            # TODO FIXME Add "subject" to all capabilities
+            "op": "write",
+            "path": "test/{...}"
+        }
+        sign_and_store_state(
+            channel_id=channel_id,
+            path=f"auth/tools/{tool_id}/rights/cap_001",
+            contents=cap_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
+        )
+
+        # Create channel object
+        channel = Channel(
+            channel_id=channel_id,
+            state_store=state_store,
+            message_store=message_store,
+            blob_store=None,
+            jwt_secret="test_secret_key"
+        )
+
+        # Tool authenticates to channel
+        tool_token = self.authenticate_with_challenge(channel, tool_id, tool_private)
+
+        # Tool should be able to write many times (testing 10)
+        for i in range(10):
+            print(f"Setting state - use #{i}")
+            path=f"test/item_{i}"
+            contents = {
+                "count": i
+            }
+            set_channel_state(channel, path, contents, tool_token, tool_keypair)
+
+        # Verify all writes succeeded
+        for i in range(10):
+            result = channel.get_state(f"test/item_{i}", tool_token)
+            assert result is not None
+
+    def test_limited_tool_enforces_use_limit(self, temp_db_path, tool_keypair, admin_keypair, crypto):
+        """Tools with use_limit should be limited to that many writes"""
+        from channel import Channel
+        from sqlite_state_store import SqliteStateStore
+        from sqlite_message_store import SqliteMessageStore
+
+        admin_id = admin_keypair['user_id']
+        admin_public = extract_public_key(admin_id)
+        admin_private = admin_keypair['private']
+        channel_id = encode_channel_id(admin_public)
+
+        state_store = SqliteStateStore(temp_db_path)
+        message_store = SqliteMessageStore(temp_db_path)
+
+        # Create channel
+        channel = Channel(
+            channel_id=channel_id,
+            state_store=state_store,
+            message_store=message_store,
+            blob_store=None,
+            jwt_secret="test_secret_key"
+        )
+
+        # Admin authenticates
+        # NOTE: We must use the Channel API here in order to initialize tool limit tracking on creation
+        admin_token = self.authenticate_with_challenge(channel, admin_id, admin_private)
+
+        tool_id = tool_keypair['tool_id']
+        tool_private = tool_keypair['private']
+        # Create tool WITH use_limit=3
+        tool_path = f"auth/tools/{tool_id}"
+        tool_info = {
+            "tool_id": tool_id,
+            "description": "Limited test tool",
+            "use_limit": 3
+        }
+        # Creator adds tool to channel - This set_state() call should initiate tool use tracking
+        set_channel_state(channel, tool_path, tool_info, admin_token, admin_keypair)
+        print(f"Created tool {tool_id}")
+
+        # Grant tool permission to write to test paths
+        cap_path=f"auth/tools/{tool_id}/rights/cap_001"
+        cap_info = {
+            "op": "write",
+            "path": "test/{...}"
+        }
+        set_channel_state(channel, cap_path, cap_info, admin_token, admin_keypair)
+
+        # Tool authenticates to the channel
+        tool_token = self.authenticate_with_challenge(channel, tool_id, tool_private)
+
+        # First 3 writes should succeed
+        for i in range(3):
+            path = f"test/item_{i}"
+            contents = {
+                "count": i
+            }
+            set_channel_state(channel, path, contents, tool_token, tool_keypair)
+
+        # 4th write should fail
+        with pytest.raises(ValueError) as exc_info:
+            path = f"test/item_3"
+            contents = {
+                "count": 3
+            }
+            set_channel_state(channel, path, contents, tool_token, tool_keypair)
+        assert "exceeded use limit" in str(exc_info.value).lower()
+
+    def test_tool_limit_only_counts_successful_writes(self, temp_db_path, tool_keypair, admin_keypair, crypto):
+        """Failed writes should not increment tool usage counter"""
+        from channel import Channel
+        from sqlite_state_store import SqliteStateStore
+        from sqlite_message_store import SqliteMessageStore
+
+        admin_id = admin_keypair['user_id']
+        admin_private = admin_keypair['private']
+        channel_id = admin_keypair['channel_id']
+        tool_id = tool_keypair['tool_id']
+        tool_private = tool_keypair['private']
+
+        state_store = SqliteStateStore(temp_db_path)
+        message_store = SqliteMessageStore(temp_db_path)
+
+        # Create channel
+        channel = Channel(
+            channel_id=channel_id,
+            state_store=state_store,
+            message_store=message_store,
+            blob_store=None,
+            jwt_secret="test_secret_key"
+        )
+
+        # Authenticate the admin to the channel
+        admin_token = self.authenticate_with_challenge(channel, admin_id, admin_private)
+
+        # Create tool WITH use_limit=2
+        tool_info = {
+            "tool_id": tool_id,
+            "description": "Limited test tool",
+            "use_limit": 2
+        }
+        # Creator adds tool to channel
+        tool_path = f"auth/tools/{tool_id}"
+        set_channel_state(channel, tool_path, tool_info, admin_token, admin_keypair)
+
+        # Grant tool permission to write ONLY to "allowed/{...}"
+        cap_path = f"auth/tools/{tool_id}/rights/cap_001"
+        cap_info = {
+            "op": "write",
+            "path": "allowed/{...}"
+        }
+        set_channel_state(channel, cap_path, cap_info, admin_token, admin_keypair)
+
+        # Tool authenticates to the channel
+        tool_token = self.authenticate_with_challenge(channel, tool_id, tool_private)
+
+        # Try to write to unauthorized path - should fail AND not count
+        with pytest.raises(ValueError):
+            set_channel_state(channel, "forbidden/item", {"bad":"yes"}, tool_token, tool_keypair)
+
+        # Now do 2 successful writes
+        set_channel_state(channel, "allowed/item_0", {"data": 0}, tool_token, tool_keypair)
+        set_channel_state(channel, "allowed/item_1", {"data": 1}, tool_token, tool_keypair)
+
+        # 3rd write should fail (limit is 2)
+        with pytest.raises(ValueError) as exc_info:
+            set_channel_state(channel, "allowed/item_2", {"data": 2}, tool_token, tool_keypair)
+        assert "exceeded use limit" in str(exc_info.value).lower()
+
+    def test_tool_usage_tracking_in_state_store(self, temp_db_path):
+        """Test that state store correctly tracks tool usage"""
+        from sqlite_state_store import SqliteStateStore
+
+        state_store = SqliteStateStore(temp_db_path)
+        channel_id = "test_channel"
+        tool_id = "T_test_tool"
+
+        # Initially no usage
+        usage = state_store.get_tool_usage(channel_id, tool_id)
+        assert usage is None
+
+        # Initialize tracking (this is called when tool is created with use_limit)
+        state_store.initialize_tool_usage(channel_id, tool_id)
+
+        # Verify initialized
+        usage = state_store.get_tool_usage(channel_id, tool_id)
+        assert usage is not None
+        assert usage['use_count'] == 0
+        assert usage['last_used_at'] is None
+
+        # Increment once
+        now = 1000000
+        count = state_store.increment_tool_usage(channel_id, tool_id, now)
+        assert count == 1
+
+        # Verify stored correctly
+        usage = state_store.get_tool_usage(channel_id, tool_id)
+        assert usage is not None
+        assert usage['use_count'] == 1
+        assert usage['last_used_at'] == now
+
+        # Increment again
+        now2 = 2000000
+        count = state_store.increment_tool_usage(channel_id, tool_id, now2)
+        assert count == 2
+
+        # Verify incremented
+        usage = state_store.get_tool_usage(channel_id, tool_id)
+        assert usage is not None
+        assert usage['use_count'] == 2
+        assert usage['last_used_at'] == now2
+
+    def test_regular_users_not_subject_to_use_limits(self, temp_db_path, user_keypair, admin_keypair):
+        """Regular users (U_*) should not be subject to use limits"""
+        from channel import Channel
+        from sqlite_state_store import SqliteStateStore
+        from sqlite_message_store import SqliteMessageStore
+
+        user_id = user_keypair['user_id']
+        user_private = user_keypair['private']
+        admin_id = admin_keypair['user_id']
+        admin_private = admin_keypair['private']
+        channel_id = admin_keypair['channel_id']
+
+        state_store = SqliteStateStore(temp_db_path)
+        message_store = SqliteMessageStore(temp_db_path)
+
+        # Create channel
+        channel = Channel(
+            channel_id=channel_id,
+            state_store=state_store,
+            message_store=message_store,
+            blob_store=None,
+            jwt_secret="test_secret_key"
+        )
+
+        # Creator authenticates
+        admin_token = self.authenticate_with_challenge(channel, admin_id, admin_private)
+
+        # Creator adds user to the channel
+        set_channel_state(channel, f"auth/users/{user_id}", {"user_id": user_id}, admin_token, admin_keypair)
+        
+        # Creator grants user write ability on test/
+        cap_path = f"auth/users/{user_id}/rights/write_to_test"
+        cap_info = {
+            "op": "write",
+            "path": "test/{any}"
+        }
+        set_channel_state(channel, cap_path, cap_info, admin_token, admin_keypair)
+
+        # Creator should be able to write many times without limit
+        for i in range(10):
+            set_channel_state(channel, f"test/item_{i}", {"data": i}, admin_token, admin_keypair)
+
+        # Verify all writes succeeded
+        for i in range(10):
+            result = channel.get_state(f"test/item_{i}", admin_token)
+            assert result is not None
+
+        # Verify no usage tracking for admin
+        admin_usage = state_store.get_tool_usage(channel_id, admin_id)
+        assert admin_usage is None
+
+        # User authenticates
+        user_token = self.authenticate_with_challenge(channel, user_id, user_private)
+
+        # User should be able to write many times without limit
+        for i in range(10, 20):
+            set_channel_state(channel, f"test/item_{i}", {"data": i}, user_token, user_keypair)
+
+        # Verify all writes succeeded
+        for i in range(10, 20):
+            result = channel.get_state(f"test/item_{i}", user_token)
+            assert result is not None
+
+        # Verify no usage tracking for user
+        user_usage = state_store.get_tool_usage(channel_id, user_id)
+        assert user_usage is None
+

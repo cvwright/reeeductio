@@ -176,22 +176,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: string
-                    format: base64
-                    description: Base64-encoded state data (interpretation is context-dependent)
-                  updated_at:
-                    type: integer
-                    format: int64
-                    description: Unix timestamp in milliseconds
-                  updated_by:
-                    type: string
-                    pattern: '^[A-Za-z0-9_-]{44}$'
-                    minLength: 44
-                    maxLength: 44
-                    description: Typed user identifier of last updater
+                $ref: '#/components/schemas/StateEntry'
         '404':
           $ref: '#/components/responses/NotFound'
         '401':
@@ -202,7 +187,9 @@ paths:
     put:
       tags: [State]
       summary: Set state value
-      description: Create or update state data with capability verification
+      description: |
+        Create or update state data with cryptographic signature verification.
+        All state entries must be signed - the server verifies the signature before storing.
       parameters:
         - $ref: '#/components/parameters/ChannelId'
         - name: path
@@ -218,7 +205,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [data]
+              required: [data, signature, signed_by, signed_at]
               properties:
                 data:
                   type: string
@@ -227,13 +214,17 @@ paths:
                 signature:
                   type: string
                   format: base64
-                  description: Required for privileged paths (e.g., members/*/rights/)
+                  description: Ed25519 signature over (channel_id|path|data|signed_at) by signer (REQUIRED for all state writes)
                 signed_by:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{44}$'
                   minLength: 44
                   maxLength: 44
-                  description: Typed user identifier of signer
+                  description: Typed user/tool identifier of signer (REQUIRED for all state writes)
+                signed_at:
+                  type: integer
+                  format: int64
+                  description: Unix timestamp in milliseconds when entry was signed (REQUIRED for all state writes)
       responses:
         '200':
           description: State updated successfully
@@ -244,10 +235,16 @@ paths:
                 properties:
                   path:
                     type: string
-                  updated_at:
+                  signed_at:
                     type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds
+                    description: Unix timestamp in milliseconds from the signed state entry
+        '400':
+          description: Invalid signature or missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -256,7 +253,9 @@ paths:
     delete:
       tags: [State]
       summary: Delete state value
-      description: Remove state data with capability verification
+      description: |
+        Remove state data with cryptographic signature verification.
+        Deletion requests must be signed - the server verifies the signature before deleting.
       parameters:
         - $ref: '#/components/parameters/ChannelId'
         - name: path
@@ -267,22 +266,36 @@ paths:
       security:
         - BearerAuth: []
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [signature, signed_by, signed_at]
               properties:
                 signature:
                   type: string
                   format: base64
+                  description: Ed25519 signature over (path + "DELETE" + signed_at) by signer (REQUIRED)
                 signed_by:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{44}$'
                   minLength: 44
                   maxLength: 44
+                  description: Typed user/tool identifier of signer (REQUIRED)
+                signed_at:
+                  type: integer
+                  format: int64
+                  description: Unix timestamp in milliseconds when deletion was signed (REQUIRED)
       responses:
         '204':
           description: State deleted successfully
+        '400':
+          description: Invalid signature or missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -708,7 +721,7 @@ components:
 
     Capability:
       type: object
-      required: [op, path, granted_by, granted_at, signature]
+      required: [op, path]
       properties:
         op:
           type: string
@@ -724,20 +737,6 @@ components:
             - Trailing / indicates prefix match
             Examples: "profiles/{self}/", "topics/{any}/messages/", "auth/users/{other}/banned"
           example: "profiles/{self}/"
-        granted_by:
-          type: string
-          pattern: '^[A-Za-z0-9_-]{44}$'
-          minLength: 44
-          maxLength: 44
-          description: Typed user identifier of granter
-        granted_at:
-          type: integer
-          format: int64
-          description: Unix timestamp in milliseconds when granted
-        signature:
-          type: string
-          format: base64
-          description: Ed25519 signature of capability
 
     Member:
       type: object
@@ -826,6 +825,39 @@ components:
           type: string
           format: base64
           description: Ed25519 signature over the role grant by granter
+
+    StateEntry:
+      type: object
+      required: [path, data, signature, signed_by, signed_at]
+      description: |
+        State entry stored in the channel's state tree.
+        Every state entry must be cryptographically signed.
+      properties:
+        path:
+          type: string
+          pattern: '^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)*$'
+          description: |
+            State path using slug-formatted segments (alphanumeric, dots, hyphens, underscores).
+            Examples: "profiles/alice", "auth/users/U_abc123", "topics/general/messages"
+            Wildcards like {self}, {any} are NOT allowed in user-created paths.
+        data:
+          type: string
+          format: base64
+          description: Base64-encoded state data (interpretation is context-dependent)
+        signature:
+          type: string
+          format: base64
+          description: Ed25519 signature over the state entry (channel_id|path|data|signed_at) by signer
+        signed_by:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Typed user/tool identifier of signer
+        signed_at:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when entry was signed
 
     Error:
       type: object
