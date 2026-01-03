@@ -19,21 +19,41 @@ rEEEductio is not intended to be a replacement for an app like Signal.  Instead,
 - Linear ordering verified by the server
 
 **State**: A flexible key-value store within each channel that can hold:
-- **Plaintext state**: Member lists, capabilities, topic metadata (server can read for authorization)
+- **Plaintext state**: User identities, roles, capabilities, tools, topic metadata (server can read for authorization)
 - **Encrypted state**: User preferences, private data (server stores as opaque blobs)
+- **All state entries must be signed**: Each entry includes signature, signed_by (user ID), and signed_at (timestamp)
+- Data is stored as base64. Interpretation is up to the application, and format is determined by the path of the state entry, ie the "key" in the key-value store.
 
 **Capabilities**: Granular, signed permissions that control access:
 - Each capability specifies an operation (`read`, `create`, `write`) and a path pattern
-- Capabilities are individually signed by the granter
-- Stored at `/state/members/{public_key}/rights/{capability_id}`
+- Path patterns support wildcards: `{self}`, `{any}`, `{other}`, `{...}` (recursive)
+- Capabilities can be granted directly to users or via roles
+- User capabilities: `/state/auth/users/{user_id}/rights/{capability_id}`
+- Role capabilities: `/state/auth/roles/{role_id}/rights/{capability_id}`
+- Tool capabilities: `/state/auth/tools/{tool_id}/rights/{capability_id}`
+
+**Roles**: Reusable permission sets for RBAC:
+- Roles are defined at `/state/auth/roles/{role_id}` with associated capabilities
+- Users are granted roles at `/state/auth/users/{user_id}/roles/{role_id}`
+- Users inherit all capabilities from their assigned roles
+- Role grants can have optional expiration times
+
+**Tools**: Limited-use keys with no ambient authority:
+- Tools are Ed25519 keypairs identified by `T_` prefix
+- Stored at `/state/auth/tools/{tool_id}`
+- Can only perform actions explicitly granted via capabilities
+- Optional `use_limit` restricts total number of state writes
+- Tool usage is tracked separately from regular users
 
 ### Security Model
 
 1. **Zero-knowledge server**: The server never sees plaintext message content
 2. **End-to-end encryption**: Messages are encrypted with the channel's symmetric key
-3. **Capability-based authorization**: All operations require signed capabilities
+3. **Capability-based authorization**: All operations require explicit capabilities (users, roles, and tools)
 4. **Message integrity**: Hash chains ensure messages cannot be tampered with
-5. **Signed capabilities**: Prevents privilege escalation and provides audit trail
+5. **Signed state**: All state entries are cryptographically signed, preventing tampering and providing audit trail
+6. **RBAC support**: Role-based access control allows flexible permission management
+7. **Limited-use tools**: Tools can be restricted to a fixed number of operations, enabling secure automation
 
 ## API Endpoints
 
@@ -58,11 +78,22 @@ PUT    /channels/{channel_id}/state/{path}
 DELETE /channels/{channel_id}/state/{path}
 ```
 
-All channel data is stored as state:
-- `/state/members/{public_key}` - Member identity
-- `/state/members/{public_key}/rights/{capability_id}` - Individual capabilities
+All channel data is stored as signed state entries:
+- `/state/auth/users/{user_id}` - User identity
+- `/state/auth/users/{user_id}/rights/{capability_id}` - User capabilities
+- `/state/auth/users/{user_id}/roles/{role_id}` - Role grants to users
+- `/state/auth/roles/{role_id}` - Role definitions
+- `/state/auth/roles/{role_id}/rights/{capability_id}` - Role capabilities
+- `/state/auth/tools/{tool_id}` - Tool definitions (with optional use_limit)
+- `/state/auth/tools/{tool_id}/rights/{capability_id}` - Tool capabilities
 - `/state/topics/{topic_id}/metadata` - Topic information
-- `/state/user/{public_key}/*` - User-specific encrypted data
+- `/state/user/{user_id}/*` - User-specific encrypted data
+
+Each state entry includes:
+- `data` - Base64-encoded content
+- `signature` - Ed25519 signature over `channel_id|path|data|signed_at`
+- `signed_by` - User ID who created the entry
+- `signed_at` - Unix timestamp in milliseconds
 
 ### Messages
 
@@ -98,63 +129,78 @@ Content-addressed storage for encrypted files/attachments.
 ### Path Patterns
 
 Capabilities use path patterns with wildcards:
-- `*` matches one path segment
-- Trailing `/` indicates prefix match
+- `{any}` - Matches any single path segment
+- `{self}` - Matches the acting user's own ID
+- `{other}` - Matches any ID except the acting user
+- `{...}` - Matches any remaining path segments (recursive)
+- Trailing `/` indicates prefix match (deprecated, use `{...}` instead)
 
 Examples:
-- `/state/members/*/rights/` - Can access any member's rights
-- `/state/topics/*/messages/` - Can post to any topic
-- `/state/user/{self}/` - Special variable for user's own path
+- `auth/users/{any}/rights/{...}` - Can access any user's rights at any depth
+- `topics/{any}/messages/{...}` - Can post to messages in any topic at any depth
+- `auth/users/{self}/` - Can only access user's own data
+- `auth/users/{other}/banned` - Can ban other users (but not self)
 
 ### Capability Structure
 
 ```json
 {
   "op": "create",
-  "path": "/state/topics/*/messages/",
-  "granted_by": "base64-granter-public-key",
-  "granted_at": 1234567890,
-  "signature": "base64-ed25519-signature"
+  "path": "topics/{any}/messages/{...}"
 }
 ```
 
+Note: The `granted_by`, `granted_at`, and `signature` fields are added automatically by the state storage system when a capability is created.
+
 ### Granting Capabilities
 
-To grant a capability to another user:
+**Direct capability grants** to users or tools:
 
-1. **Have permission to grant**: Must have `create` capability on `/state/members/*/rights/`
+1. **Have permission to grant**: Must have `create` capability on the target path
 2. **Have the capability being granted**: Cannot grant what you don't have (prevents privilege escalation)
-3. **Sign the capability**: Signature proves authenticity
+3. **Sign the state entry**: All state entries must be signed
+
+**Role-based capability grants**:
+
+1. Create a role with capabilities at `/state/auth/roles/{role_id}/rights/{capability_id}`
+2. Grant the role to users at `/state/auth/users/{user_id}/roles/{role_id}`
+3. Users inherit all capabilities from their roles
+4. Granter must have superset of all role capabilities
 
 The server verifies:
-- Signature is valid
-- Granter has permission to grant capabilities
-- Granter has a superset of the capability being granted
+- All state entries have valid signatures
+- Granter has permission to create the state entry
+- For capability grants: Granter has a superset of the capability being granted
+- For role grants: Granter has a superset of all capabilities in the role
 
 ## Bootstrap Process
 
 ### Creating a Channel
 
 1. Generate channel Ed25519 keypair (channel public key = channel_id)
-2. Use channel private key to add initial state:
-   - Add channel creator as first member
-   - Grant creator admin capabilities
-3. Create join key with limited capabilities
-4. Package QR code with: `channel_id`, `symmetric_key`, `join_private_key`
+2. Channel creator has full admin authority (no need to explicitly add to state)
+3. Creator can define roles for common permission sets:
+   ```
+   PUT /state/auth/roles/user
+   PUT /state/auth/roles/user/rights/{capability_id}
+   ```
+4. Create join tool with limited capabilities (e.g., can only create new users and grant "user" role)
+5. Package QR code with: `channel_id`, `symmetric_key`, `join_tool_private_key`
 
 ### Joining a Channel
 
 1. Scan QR code to get channel credentials
 2. Generate personal Ed25519 keypair
-3. Use join key to add yourself as a member:
+3. Use join tool to add yourself as a user:
    ```
-   PUT /state/members/{your_public_key}
+   PUT /state/auth/users/{your_user_id}
    ```
-4. Use join key to grant yourself basic capabilities:
+4. Use join tool to grant yourself the basic user role:
    ```
-   PUT /state/members/{your_public_key}/rights/post_messages
+   PUT /state/auth/users/{your_user_id}/roles/user
    ```
 5. Authenticate with your own keypair
+6. Join tool's usage is tracked and can be limited via `use_limit`
 
 ## Installation & Setup
 
@@ -186,7 +232,7 @@ Once running, visit:
 
 ## Database Schema
 
-SQLite database with three main tables:
+SQLite database with four main tables:
 
 ### `state`
 ```sql
@@ -194,12 +240,27 @@ CREATE TABLE state (
     channel_id TEXT NOT NULL,
     path TEXT NOT NULL,
     data TEXT NOT NULL,
-    encrypted BOOLEAN NOT NULL,
-    updated_by TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
+    signature TEXT NOT NULL,
+    signed_by TEXT NOT NULL,
+    signed_at INTEGER NOT NULL,
     PRIMARY KEY (channel_id, path)
 )
 ```
+
+All state entries are cryptographically signed. The signature is computed over `channel_id|path|data|signed_at`.
+
+### `tool_usage`
+```sql
+CREATE TABLE tool_usage (
+    channel_id TEXT NOT NULL,
+    tool_id TEXT NOT NULL,
+    use_count INTEGER NOT NULL DEFAULT 0,
+    last_used_at INTEGER,
+    PRIMARY KEY (channel_id, tool_id)
+)
+```
+
+Tracks usage counts for tools with `use_limit` restrictions.
 
 ### `messages`
 ```sql
@@ -232,30 +293,36 @@ CREATE TABLE blobs (
 
 The server can see:
 - Channel IDs (public keys)
-- Member public keys
-- Capabilities and permissions (stored as plaintext state)
+- User and tool public keys (from typed identifiers)
+- Roles, capabilities, and permissions (stored as plaintext state)
+- State entry signatures and who signed them
 - Message metadata (timestamps, hashes, chain structure)
 - Topic IDs
+- Tool usage counts
 
 ### What the Server Cannot See
 
 - Message content (encrypted with channel symmetric key)
 - User preferences and private state (encrypted client-side)
 - Channel symmetric keys
-- User private keys
+- User or tool private keys
 
 ### Threat Model
 
 Protected against:
-- **Compromised server**: Can't decrypt messages or impersonate users
-- **Privilege escalation**: Can't grant capabilities you don't have
+- **Compromised server**: Can't decrypt messages or impersonate users/tools
+- **Privilege escalation**: Can't grant capabilities you don't have (applies to roles too)
 - **Message tampering**: Hash chains detect modifications
+- **State tampering**: All state entries are signed and verified
 - **Replay attacks**: Challenges expire, signatures are unique
+- **Tool abuse**: Use limits prevent unlimited operations by compromised tools
 
 Not protected against:
-- **Network analysis**: Server sees communication patterns
+- **Network analysis**: Server sees communication patterns and timing
 - **Compromised channel key**: Anyone with the QR code can decrypt messages
 - **Compromised user key**: Can impersonate that user
+- **Compromised tool key**: Can use tool's capabilities (up to use_limit)
+- **Malicious channel creator**: Creator has full admin authority
 
 ## Example Usage
 
@@ -310,13 +377,24 @@ messages = response.json()
 
 ## Design Decisions
 
-### Why Capability-Based?
+### Why Capability-Based with RBAC?
 
-Traditional access control (ACLs, RBAC) centralizes power in administrators. Capability-based security allows:
-- **Delegation**: Users can grant subset of their capabilities
+Pure capability-based systems provide fine-grained control but can be complex to manage. This system combines capabilities with RBAC:
+- **Capabilities**: Fine-grained, delegatable permissions with wildcard patterns
+- **Roles**: Reusable permission sets for common access patterns
+- **Delegation**: Users can grant subset of their capabilities (directly or via roles)
 - **Least privilege**: Each key/token only has exact permissions needed
-- **Auditability**: All capabilities are signed and traceable
-- **Decentralization**: No single admin, channel creator can bootstrap but not monopolize
+- **Auditability**: All state entries (including capabilities) are signed and traceable
+- **Flexibility**: Choose direct capabilities for specific needs, roles for common patterns
+
+### Why Tools?
+
+Tools are limited-use keys designed for automation and integration:
+- **No ambient authority**: Tools can only do what they're explicitly granted
+- **Use limits**: Optional restrictions prevent runaway automation
+- **Revocable**: Delete the tool's state entry to revoke access
+- **Auditable**: Tool usage is tracked separately from users
+- **Secure delegation**: Share tool keys for specific tasks without sharing user keys
 
 ### Why Blockchain-Style Message Chains?
 
