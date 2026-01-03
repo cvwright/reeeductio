@@ -18,3 +18,4 @@
 17. Verify state signatures in the state store get_state() before adding to the cache, then we don't have to validate again and again in the Channel
 18. Add an authz cache of public keys that we've already validated back to the creator key
 19. ~~Add logging~~ ✓
+20. Require capability for getting or putting blobs, based on state path `blobs/{blob_id}`
