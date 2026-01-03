@@ -59,6 +59,8 @@ This object is created when the channel is created and contains essentially the 
 
 When the server receives a `PUT /channels` request, it looks up the info for the creating user.  If the user has a limit on the number of their channels, the server lists its state under `server/users/{user_id}/channels` to see how many channels the user already has.  The server channel creator (ie the "server admin") is always authorized to create channels.
 
+Note: The `server/` state hierarchy is owned and managed by the server admin.  The `{user_id}` paths are not controlled by the individual users of the server; they are just for the admin's own bookkeeping.
+
 # Extension ideas
 
 ## Managing S3 Buckets
