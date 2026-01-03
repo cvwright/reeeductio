@@ -10,13 +10,42 @@ e2ee-messaging/
 ├── start.sh                  # Quick start script
 │
 ├── backend/                  # Backend implementation
-│   ├── main.py               # FastAPI application
-│   ├── database.py           # SQLite database layer
-│   ├── crypto.py             # Cryptographic utilities
-│   ├── authorization.py      # Capability-based authorization
+│   ├── main.py               # FastAPI application entry point
+│   ├── channel.py            # Channel management and API logic
+│   ├── crypto.py             # Cryptographic utilities (Ed25519, SHA256)
+│   ├── authorization.py      # Capability-based authorization with RBAC
 │   ├── identifiers.py        # Typed identifier utilities
-│   ├── test_backend.py       # Backend test suite
-│   └── test_identifiers.py   # Identifier tests
+│   ├── path_validation.py    # Path wildcard matching ({any}, {self}, {other}, {...})
+│   ├── capability.py         # Capability data structures
+│   │
+│   ├── state_store.py        # StateStore interface
+│   ├── sqlite_state_store.py # SQLite StateStore implementation
+│   ├── firestore_state_store.py # Firestore StateStore implementation
+│   │
+│   ├── message_store.py      # MessageStore interface
+│   ├── sqlite_message_store.py # SQLite MessageStore implementation
+│   ├── firestore_message_store.py # Firestore MessageStore implementation
+│   │
+│   ├── blob_store.py         # BlobStore interface
+│   ├── filesystem_blob_store.py # Filesystem BlobStore implementation
+│   ├── sqlite_blob_store.py  # SQLite BlobStore implementation
+│   │
+│   └── tests/                # Test suite
+│       ├── conftest.py       # Shared fixtures and test utilities
+│       ├── test_authorization.py    # Authorization tests
+│       ├── test_rbac.py      # Role-based access control tests
+│       ├── test_tools.py     # Tool authorization and use limit tests
+│       ├── test_crypto.py    # Cryptographic function tests
+│       ├── test_identifiers.py # Typed identifier tests
+│       ├── test_state_storage.py # Generic state storage tests
+│       ├── test_message_storage.py # Message storage tests
+│       ├── test_blob_storage.py # Blob storage tests
+│       ├── test_blob_auth.py # Blob authorization tests
+│       ├── test_path_validation.py # Path wildcard validation tests
+│       ├── test_path_validation_integration.py # Path validation integration tests
+│       ├── test_integration.py # End-to-end integration tests
+│       ├── test_firestore_stores.py # Firestore backend tests
+│       └── test_websocket.py # WebSocket tests
 │
 ├── client/                   # Client implementation
 │   └── example_client.py     # Client usage examples
@@ -39,8 +68,10 @@ uv pip install -e .
 
 ### 2. Run Tests
 ```bash
-.venv/bin/python backend/test_backend.py
-.venv/bin/python backend/test_identifiers.py
+uv run pytest
+# or run specific tests
+uv run pytest backend/tests/test_rbac.py
+uv run pytest backend/tests/test_tools.py
 ```
 
 ### 3. Start Server
@@ -67,35 +98,62 @@ Or use the convenience script:
 ### Core Backend Files
 
 **backend/main.py**
-- FastAPI application with all HTTP endpoints
+- FastAPI application entry point
+- HTTP endpoint definitions
 - JWT authentication middleware
 - Request/response validation
-- Integrates database, crypto, and authorization modules
 
-**backend/database.py**
-- SQLite database abstraction
-- State storage (members, capabilities, metadata)
-- Message storage with chain tracking
-- Blob storage (content-addressed)
-- Transaction management
+**backend/channel.py**
+- Channel management logic
+- State and message operations
+- Authentication (challenge/verify/JWT)
+- Authorization checks via AuthorizationEngine
 
 **backend/crypto.py**
 - Ed25519 signature verification
-- Message hash computation
-- Capability signature verification
+- SHA256 hash computation
+- Message and blob ID generation
 - Base64 encoding/decoding utilities
 
 **backend/authorization.py**
-- Capability-based access control
-- Path pattern matching with wildcards
+- Capability-based access control with RBAC
+- Role management and validation
+- Tool authorization and use limits
+- Path pattern matching via PathValidator
 - Permission checking (read/create/write)
 - Capability subset validation
 - Privilege escalation prevention
 
+**backend/path_validation.py**
+- Path wildcard pattern matching
+- Supports {any}, {self}, {other}, {...} wildcards
+- Used by authorization engine
+
 **backend/identifiers.py**
-- Type-safe identifier classes
-- Validation and serialization
-- ID generation utilities
+- Typed identifier encoding/decoding
+- Supports Channel (C_), User (U_), Tool (T_), Message (M_), Blob (B_)
+- 264-bit format (44-char URL-safe base64)
+- Type validation
+
+### Storage Layer
+
+**State Storage**
+- `state_store.py` - StateStore interface
+- `sqlite_state_store.py` - SQLite implementation with tool usage tracking
+- `firestore_state_store.py` - Firestore implementation
+- All state entries are signed (signature, signed_by, signed_at)
+
+**Message Storage**
+- `message_store.py` - MessageStore interface
+- `sqlite_message_store.py` - SQLite implementation
+- `firestore_message_store.py` - Firestore implementation
+- Hash chain validation
+
+**Blob Storage**
+- `blob_store.py` - BlobStore interface
+- `filesystem_blob_store.py` - Filesystem implementation
+- `sqlite_blob_store.py` - SQLite implementation
+- Content-addressed storage
 
 ### Configuration Files
 
@@ -134,16 +192,72 @@ Or use the convenience script:
 
 ### Test Files
 
-**backend/test_backend.py**
-- Database operation tests
-- Cryptographic function tests
-- Authorization engine tests
-- End-to-end integration tests
+**backend/tests/conftest.py**
+- Shared pytest fixtures (temp_db_path, state_store, crypto, authz, etc.)
+- Keypair fixtures (admin_keypair, user_keypair, tool_keypair)
+- Helper functions (sign_state_entry, sign_and_store_state, set_channel_state)
+- Firestore emulator setup
 
-**backend/test_identifiers.py**
-- Typed identifier validation tests
-- Serialization/deserialization tests
-- ID generation tests
+**backend/tests/test_authorization.py**
+- Basic capability authorization tests
+- Permission checking tests
+- Capability subset validation
+
+**backend/tests/test_rbac.py**
+- Role-based access control tests
+- Role grant validation
+- Multiple role inheritance
+- Expired role handling
+- Privilege escalation prevention
+
+**backend/tests/test_tools.py**
+- Tool typed identifier tests
+- Tool capability authorization
+- Tool use limit enforcement
+- Tool authentication
+- Privilege escalation prevention for tools
+
+**backend/tests/test_crypto.py**
+- Ed25519 signature verification
+- SHA256 hash computation
+- Base64 encoding/decoding
+
+**backend/tests/test_identifiers.py**
+- Typed identifier encoding/decoding
+- Type validation
+- URL-safety verification
+
+**backend/tests/test_state_storage.py**
+- Generic state storage tests (work with any StateStore)
+- SQLite-specific tests
+- Signed state entry validation
+
+**backend/tests/test_message_storage.py**
+- Message storage and retrieval
+- Hash chain validation
+
+**backend/tests/test_blob_storage.py**
+- Blob storage backends (filesystem and SQLite)
+- Content-addressed storage
+
+**backend/tests/test_blob_auth.py**
+- Blob authorization tests
+
+**backend/tests/test_path_validation.py**
+- Path wildcard pattern matching
+- {any}, {self}, {other}, {...} validation
+
+**backend/tests/test_path_validation_integration.py**
+- Integration tests for path validation with authorization
+
+**backend/tests/test_integration.py**
+- End-to-end workflow tests
+
+**backend/tests/test_firestore_stores.py**
+- Firestore StateStore and MessageStore tests
+
+**backend/tests/test_websocket.py**
+- WebSocket functionality tests
 
 ## Development Workflow
 
@@ -151,15 +265,17 @@ Or use the convenience script:
 Edit `openapi.yaml` first to define the contract, then update `backend/main.py` to implement it.
 
 ### 2. Add Features
-- Add database methods in `backend/database.py`
+- Add storage methods in appropriate store implementation
 - Add crypto operations in `backend/crypto.py`
 - Add authorization logic in `backend/authorization.py`
-- Wire everything together in `backend/main.py`
+- Add path validation patterns in `backend/path_validation.py`
+- Wire everything together in `backend/channel.py` and `backend/main.py`
 
 ### 3. Test
-- Add tests to `backend/test_backend.py`
-- Run: `.venv/bin/python backend/test_backend.py`
-- Run: `.venv/bin/python backend/test_identifiers.py`
+- Add tests to appropriate test file in `backend/tests/`
+- Run all tests: `uv run pytest`
+- Run specific test file: `uv run pytest backend/tests/test_rbac.py`
+- Run with coverage: `uv run pytest --cov=backend --cov-report=html`
 
 ### 4. Document
 - Update README.md with new features

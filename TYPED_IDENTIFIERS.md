@@ -19,6 +19,7 @@ This E2E encrypted pubsub system now uses **typed identifiers** with a 264-bit f
 |---------|-----------|-------------|----------|----------------------------|
 | Channel | `C`       | 2           | 000010   | Ed25519 channel public key |
 | User    | `U`       | 20          | 010100   | Ed25519 user public key    |
+| Tool    | `T`       | 19          | 010011   | Ed25519 tool public key    |
 | Message | `M`       | 12          | 001100   | SHA256 message hash        |
 | Blob    | `B`       | 1           | 000001   | SHA256 blob hash           |
 
@@ -36,6 +37,7 @@ This E2E encrypted pubsub system now uses **typed identifiers** with a 264-bit f
 ```
 Channel ID: CDlvwh-oQw-d-_52f0hhmcrrPQ0U-OWQ__W8_xRX5vnk
 User ID:    UDlvwh-oQw-d-_52f0hhmcrrPQ0U-OWQ__W8_xRX5vnk
+Tool ID:    TDlvwh-oQw-d-_52f0hhmcrrPQ0U-OWQ__W8_xRX5vnk
 Message ID: MM-q0VU7Bk8QX-pfJA1GM-KVashl_taBkA1A9n-_lMpZ
 Blob ID:    BM-q0VU7Bk8QX-pfJA1GM-KVashl_taBkA1A9n-_lMpZ
 ```
@@ -56,6 +58,7 @@ Blob ID:    BM-q0VU7Bk8QX-pfJA1GM-KVashl_taBkA1A9n-_lMpZ
 from identifiers import (
     encode_channel_id,
     encode_user_id,
+    encode_tool_id,
     encode_message_id,
     encode_blob_id
 )
@@ -63,6 +66,7 @@ from identifiers import (
 # From Ed25519 public key (32 bytes)
 channel_id = encode_channel_id(public_key_bytes)
 user_id = encode_user_id(public_key_bytes)
+tool_id = encode_tool_id(public_key_bytes)
 
 # From SHA256 hash (32 bytes)
 message_id = encode_message_id(hash_bytes)
