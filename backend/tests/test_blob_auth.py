@@ -13,11 +13,12 @@ import sys
 import os
 import tempfile
 import time
-
 import pytest
 
-# Add backend directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from pathlib import Path
+
+# Add tests directory to path to import conftest
+sys.path.insert(0, str(Path(__file__).parent))
 
 from blob_store import BlobMetadata, BlobReference, BlobStore
 from filesystem_blob_store import FilesystemBlobStore
@@ -27,6 +28,10 @@ from sqlite_state_store import SqliteStateStore
 from sqlite_message_store import SqliteMessageStore
 from crypto import CryptoUtils
 import base64
+
+import conftest
+sign_state_entry = conftest.sign_state_entry
+sign_and_store_state = conftest.sign_and_store_state
 
 
 # ============================================================================
@@ -188,14 +193,21 @@ class TestChannelBlobAuthorization:
     @pytest.fixture
     def channel_with_member(self, channel, admin_keypair, user_keypair):
         """Create a channel with admin and one member"""
+
+        admin_id = admin_keypair['user_id']
+        admin_private = admin_keypair['private']
+        user_id = user_keypair['user_id']
+
         # Add user as member
-        member_data = base64.b64encode(b"member_info").decode('ascii')
-        channel.state_store.set_state(
-            channel.channel_id,
-            f"members/{user_keypair['user_id']}",
-            member_data,
-            admin_keypair['user_id'],
-            int(time.time() * 1000)
+        member_data = {"user_id": user_id}
+        sign_and_store_state(
+            state_store=channel.state_store,
+            channel_id=channel.channel_id,
+            path=f"auth/users/{user_id}",
+            contents=member_data,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890
         )
         return channel
 
@@ -373,6 +385,9 @@ class TestBlobAuthorizationIntegration:
         """Setup complete environment with channel, blob store, and users"""
         # Create channel
         channel_id = admin_keypair['channel_id']
+        admin_id = admin_keypair['user_id']
+        admin_private = admin_keypair['private']
+        user_id = user_keypair['user_id']
         state_store = SqliteStateStore(temp_db_path + "_state")
         message_store = SqliteMessageStore(temp_db_path + "_msg")
 
@@ -386,13 +401,16 @@ class TestBlobAuthorizationIntegration:
         )
 
         # Add user as member
-        member_data = base64.b64encode(b"member_info").decode('ascii')
-        channel.state_store.set_state(
-            channel.channel_id,
-            f"members/{user_keypair['user_id']}",
-            member_data,
-            admin_keypair['user_id'],
-            int(time.time() * 1000)
+        user_info = {"user_id": user_id}
+        user_path = f"auth/users/{user_id}"
+        sign_and_store_state(
+            state_store=state_store,
+            channel_id=channel_id,
+            path=user_path,
+            contents=user_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890
         )
 
         return {
