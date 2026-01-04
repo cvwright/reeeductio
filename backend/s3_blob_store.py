@@ -103,7 +103,7 @@ class S3BlobStore(BlobStore):
         """
         return f"blobs/{blob_id}.meta"
 
-    def add_blob(self, blob_id: str, data: bytes, channel_id: str, uploaded_by: str) -> None:
+    def add_blob(self, blob_id: str, data: bytes, space_id: str, uploaded_by: str) -> None:
         """
         Store a blob with reference counting.
         Only writes content if blob doesn't exist, but always adds reference.
@@ -111,7 +111,7 @@ class S3BlobStore(BlobStore):
         Args:
             blob_id: Content-addressed identifier for the blob
             data: Raw binary blob data (typically encrypted)
-            channel_id: ID of the channel this blob belongs to
+            space_id: ID of the space this blob belongs to
             uploaded_by: Public key of the user who uploaded this blob
 
         Raises:
@@ -148,15 +148,15 @@ class S3BlobStore(BlobStore):
                 metadata = {"references": {}}
 
         # Check if this exact reference already exists
-        ref_key = self._get_reference_key(channel_id, uploaded_by)
+        ref_key = self._get_reference_key(space_id, uploaded_by)
         if ref_key in metadata.get("references", {}):
             raise FileExistsError(
-                f"Blob {blob_id} already has reference from {channel_id}/{uploaded_by}"
+                f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
             )
 
         # Add the new reference
         metadata["references"][ref_key] = {
-            "channel_id": channel_id,
+            "space_id": space_id,
             "uploaded_by": uploaded_by,
             "uploaded_at": int(time.time() * 1000)
         }
@@ -225,7 +225,7 @@ class S3BlobStore(BlobStore):
             # Convert references dict to list of BlobReference objects
             references = [
                 BlobReference(
-                    channel_id=ref_data["channel_id"],
+                    space_id=ref_data["space_id"],
                     uploaded_by=ref_data["uploaded_by"],
                     uploaded_at=ref_data["uploaded_at"]
                 )
@@ -242,13 +242,13 @@ class S3BlobStore(BlobStore):
                 return None
             raise
 
-    def remove_blob_reference(self, blob_id: str, channel_id: str, uploaded_by: str) -> bool:
+    def remove_blob_reference(self, blob_id: str, space_id: str, uploaded_by: str) -> bool:
         """
         Remove a reference to a blob. Deletes blob content if no references remain.
 
         Args:
             blob_id: Content-addressed identifier for the blob
-            channel_id: ID of the channel removing the reference
+            space_id: ID of the space removing the reference
             uploaded_by: Public key of the user who uploaded this reference
 
         Returns:
@@ -272,7 +272,7 @@ class S3BlobStore(BlobStore):
             raise
 
         # Remove the reference
-        ref_key = self._get_reference_key(channel_id, uploaded_by)
+        ref_key = self._get_reference_key(space_id, uploaded_by)
         if ref_key not in metadata.get("references", {}):
             return False
 

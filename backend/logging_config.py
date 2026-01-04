@@ -25,8 +25,8 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Add extra fields if present
-        if hasattr(record, "channel_id"):
-            log_data["channel_id"] = record.channel_id
+        if hasattr(record, "space_id"):
+            log_data["space_id"] = record.space_id
         if hasattr(record, "user_id"):
             log_data["user_id"] = record.user_id
         if hasattr(record, "topic_id"):

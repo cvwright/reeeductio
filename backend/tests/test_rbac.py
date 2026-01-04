@@ -20,10 +20,10 @@ sign_and_store_state = conftest.sign_and_store_state
 
 
 @pytest.fixture
-def channel_with_roles(temp_db_path, state_store, crypto, admin_keypair):
-    """Set up a channel with role definitions"""
+def space_with_roles(temp_db_path, state_store, crypto, admin_keypair):
+    """Set up a space with role definitions"""
 
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
 
@@ -34,7 +34,7 @@ def channel_with_roles(temp_db_path, state_store, crypto, admin_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="auth/roles/user",
         contents=user_role,
         signer_private_key=admin_private,
@@ -49,7 +49,7 @@ def channel_with_roles(temp_db_path, state_store, crypto, admin_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="auth/roles/user/rights/cap_read",
         contents=user_read_cap,
         signer_private_key=admin_private,
@@ -62,7 +62,7 @@ def channel_with_roles(temp_db_path, state_store, crypto, admin_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="auth/roles/user/rights/cap_post",
         contents=user_post_cap,
         signer_private_key=admin_private,
@@ -77,7 +77,7 @@ def channel_with_roles(temp_db_path, state_store, crypto, admin_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="auth/roles/moderator",
         contents=mod_role,
         signer_private_key=admin_private,
@@ -92,7 +92,7 @@ def channel_with_roles(temp_db_path, state_store, crypto, admin_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="auth/roles/moderator/rights/cap_ban",
         contents=mod_ban_cap,
         signer_private_key=admin_private,
@@ -102,16 +102,16 @@ def channel_with_roles(temp_db_path, state_store, crypto, admin_keypair):
 
     return {
         'state_store': state_store,
-        'channel_id': channel_id,
+        'space_id': space_id,
         'admin_id': admin_id
     }
 
 
-def test_load_role_capabilities(authz, channel_with_roles, user_keypair, admin_keypair):
+def test_load_role_capabilities(authz, space_with_roles, user_keypair, admin_keypair):
     """Test loading capabilities from user's roles"""
-    channel_id = channel_with_roles['channel_id']
+    space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = channel_with_roles['state_store']
+    state_store = space_with_roles['state_store']
 
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
@@ -123,7 +123,7 @@ def test_load_role_capabilities(authz, channel_with_roles, user_keypair, admin_k
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/roles/user",
         contents=role_grant,
         signer_private_key=admin_private,
@@ -132,7 +132,7 @@ def test_load_role_capabilities(authz, channel_with_roles, user_keypair, admin_k
     )
 
     # Load role capabilities
-    role_caps = authz._load_role_capabilities(channel_id, user_id)
+    role_caps = authz._load_role_capabilities(space_id, user_id)
 
     # Should have 2 capabilities from "user" role
     assert len(role_caps) == 2
@@ -143,22 +143,22 @@ def test_load_role_capabilities(authz, channel_with_roles, user_keypair, admin_k
     assert 'create' in ops
 
 
-def test_permission_check_with_roles(authz, channel_with_roles, user_keypair, admin_keypair):
+def test_permission_check_with_roles(authz, space_with_roles, user_keypair, admin_keypair):
     """Test that permission checks include role capabilities"""
-    channel_id = channel_with_roles['channel_id']
+    space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = channel_with_roles['state_store']
+    state_store = space_with_roles['state_store']
 
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
 
-    # Add user as member of the channel
+    # Add user as member of the space
     user_info = {
         "user_id": user_id
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -167,7 +167,7 @@ def test_permission_check_with_roles(authz, channel_with_roles, user_keypair, ad
     )
 
     # User has no direct capabilities yet
-    assert not authz.check_permission(channel_id, user_id, "read", "anything")
+    assert not authz.check_permission(space_id, user_id, "read", "anything")
 
     # Grant "user" role
     role_grant = {
@@ -176,7 +176,7 @@ def test_permission_check_with_roles(authz, channel_with_roles, user_keypair, ad
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/roles/user",
         contents=role_grant,
         signer_private_key=admin_private,
@@ -185,16 +185,16 @@ def test_permission_check_with_roles(authz, channel_with_roles, user_keypair, ad
     )
 
     # Now user should have permissions from role
-    assert authz.check_permission(channel_id, user_id, "read", "anything")
-    assert authz.check_permission(channel_id, user_id, "create", "topics/general/messages/msg1")
-    assert not authz.check_permission(channel_id, user_id, "write", "topics/general/messages/msg1")
+    assert authz.check_permission(space_id, user_id, "read", "anything")
+    assert authz.check_permission(space_id, user_id, "create", "topics/general/messages/msg1")
+    assert not authz.check_permission(space_id, user_id, "write", "topics/general/messages/msg1")
 
 
-def test_multiple_roles(authz, channel_with_roles, user_keypair, admin_keypair):
+def test_multiple_roles(authz, space_with_roles, user_keypair, admin_keypair):
     """Test user with multiple roles gets all capabilities"""
-    channel_id = channel_with_roles['channel_id']
+    space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = channel_with_roles['state_store']
+    state_store = space_with_roles['state_store']
 
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
@@ -206,7 +206,7 @@ def test_multiple_roles(authz, channel_with_roles, user_keypair, admin_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/roles/user",
         contents=user_role_grant,
         signer_private_key=admin_private,
@@ -220,7 +220,7 @@ def test_multiple_roles(authz, channel_with_roles, user_keypair, admin_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/roles/moderator",
         contents=mod_role_grant,
         signer_private_key=admin_private,
@@ -229,19 +229,19 @@ def test_multiple_roles(authz, channel_with_roles, user_keypair, admin_keypair):
     )
 
     # User should have capabilities from both roles
-    role_caps = authz._load_role_capabilities(channel_id, user_id)
+    role_caps = authz._load_role_capabilities(space_id, user_id)
     assert len(role_caps) == 3  # 2 from user + 1 from moderator
 
     # Check permissions from both roles
-    assert authz.check_permission(channel_id, user_id, "read", "anything")  # from user role
-    assert authz.check_permission(channel_id, user_id, "write", "auth/users/U_other/banned")  # from moderator role
+    assert authz.check_permission(space_id, user_id, "read", "anything")  # from user role
+    assert authz.check_permission(space_id, user_id, "write", "auth/users/U_other/banned")  # from moderator role
 
 
-def test_expired_role_grant_ignored(authz, channel_with_roles, user_keypair, admin_keypair):
+def test_expired_role_grant_ignored(authz, space_with_roles, user_keypair, admin_keypair):
     """Test that expired role grants are not loaded"""
-    channel_id = channel_with_roles['channel_id']
+    space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = channel_with_roles['state_store']
+    state_store = space_with_roles['state_store']
 
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
@@ -257,7 +257,7 @@ def test_expired_role_grant_ignored(authz, channel_with_roles, user_keypair, adm
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/roles/user",
         contents=role_grant,
         signer_private_key=admin_private,
@@ -266,20 +266,20 @@ def test_expired_role_grant_ignored(authz, channel_with_roles, user_keypair, adm
     )
 
     # Should not load capabilities from expired role
-    role_caps = authz._load_role_capabilities(channel_id, user_id)
+    role_caps = authz._load_role_capabilities(space_id, user_id)
     assert len(role_caps) == 0
 
     # Should not have permissions
-    assert not authz.check_permission(channel_id, user_id, "read", "anything")
+    assert not authz.check_permission(space_id, user_id, "read", "anything")
 
 
-def test_verify_role_grant_subset_checking(authz, channel_with_roles, user_keypair):
+def test_verify_role_grant_subset_checking(authz, space_with_roles, user_keypair):
     """Test that role grant validation checks granter has superset"""
-    channel_id = channel_with_roles['channel_id']
-    admin_id = channel_with_roles['admin_id']
+    space_id = space_with_roles['space_id']
+    admin_id = space_with_roles['admin_id']
     user_id = user_keypair['user_id']
 
-    # Admin (channel creator) can grant any role
+    # Admin (space creator) can grant any role
     role_grant_data = {
         "user_id": user_id,
         "role_id": "user"
@@ -287,18 +287,18 @@ def test_verify_role_grant_subset_checking(authz, channel_with_roles, user_keypa
     path = f"auth/users/{user_id}/roles/user"
 
     assert authz.verify_role_grant(
-        channel_id,
+        space_id,
         path,
         role_grant_data,
         admin_id
     )
 
 
-def test_verify_role_grant_privilege_escalation_prevented(authz, channel_with_roles, user_keypair, admin_keypair):
+def test_verify_role_grant_privilege_escalation_prevented(authz, space_with_roles, user_keypair, admin_keypair):
     """Test that users cannot grant roles they don't have capabilities for"""
-    channel_id = channel_with_roles['channel_id']
+    space_id = space_with_roles['space_id']
     user_id = user_keypair['user_id']
-    state_store = channel_with_roles['state_store']
+    state_store = space_with_roles['state_store']
 
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
@@ -310,7 +310,7 @@ def test_verify_role_grant_privilege_escalation_prevented(authz, channel_with_ro
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/cap_001",
         contents=user1_cap,
         signer_private_key=admin_private,
@@ -340,7 +340,7 @@ def test_verify_role_grant_privilege_escalation_prevented(authz, channel_with_ro
 
     # Should fail - user1 doesn't have capabilities that moderator role provides
     assert not authz.verify_role_grant(
-        channel_id,
+        space_id,
         path,
         role_grant_data,
         user_id

@@ -53,22 +53,22 @@ class SqliteBlobStore(BlobStore):
                 )
             """)
 
-            # Blob references table - tracks which channels reference which blobs
+            # Blob references table - tracks which spaces reference which blobs
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS blob_references (
                     blob_id TEXT NOT NULL,
-                    channel_id TEXT NOT NULL,
+                    space_id TEXT NOT NULL,
                     uploaded_by TEXT NOT NULL,
                     uploaded_at INTEGER NOT NULL,
-                    PRIMARY KEY (blob_id, channel_id, uploaded_by),
+                    PRIMARY KEY (blob_id, space_id, uploaded_by),
                     FOREIGN KEY (blob_id) REFERENCES blobs(blob_id) ON DELETE CASCADE
                 )
             """)
 
             # Create indices for faster lookups
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_blob_references_channel_id
-                ON blob_references(channel_id)
+                CREATE INDEX IF NOT EXISTS idx_blob_references_space_id
+                ON blob_references(space_id)
             """)
 
             cursor.execute("""
@@ -78,7 +78,7 @@ class SqliteBlobStore(BlobStore):
 
             conn.commit()
 
-    def add_blob(self, blob_id: str, data: bytes, channel_id: str, uploaded_by: str) -> None:
+    def add_blob(self, blob_id: str, data: bytes, space_id: str, uploaded_by: str) -> None:
         """
         Store a blob with reference counting.
         Only writes content if blob doesn't exist, but always adds reference.
@@ -108,14 +108,14 @@ class SqliteBlobStore(BlobStore):
                 # Always add the reference (will fail if duplicate)
                 cursor.execute("""
                     INSERT INTO blob_references
-                    (blob_id, channel_id, uploaded_by, uploaded_at)
+                    (blob_id, space_id, uploaded_by, uploaded_at)
                     VALUES (?, ?, ?, ?)
-                """, (blob_id, channel_id, uploaded_by, int(time.time() * 1000)))
+                """, (blob_id, space_id, uploaded_by, int(time.time() * 1000)))
         except sqlite3.IntegrityError as e:
             # Convert SQLite UNIQUE constraint error to FileExistsError
             if "UNIQUE constraint failed" in str(e):
                 raise FileExistsError(
-                    f"Blob {blob_id} already has reference from {channel_id}/{uploaded_by}"
+                    f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
                 )
             raise
 
@@ -135,7 +135,7 @@ class SqliteBlobStore(BlobStore):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT channel_id, uploaded_by, uploaded_at
+                SELECT space_id, uploaded_by, uploaded_at
                 FROM blob_references WHERE blob_id = ?
             """, (blob_id,))
 
@@ -146,7 +146,7 @@ class SqliteBlobStore(BlobStore):
             # Build list of references
             references = [
                 BlobReference(
-                    channel_id=row["channel_id"],
+                    space_id=row["space_id"],
                     uploaded_by=row["uploaded_by"],
                     uploaded_at=row["uploaded_at"]
                 )
@@ -155,7 +155,7 @@ class SqliteBlobStore(BlobStore):
 
             return BlobMetadata(references=references)
 
-    def remove_blob_reference(self, blob_id: str, channel_id: str, uploaded_by: str) -> bool:
+    def remove_blob_reference(self, blob_id: str, space_id: str, uploaded_by: str) -> bool:
         """
         Remove a reference to a blob. Deletes blob content if no references remain.
 
@@ -168,8 +168,8 @@ class SqliteBlobStore(BlobStore):
             # Remove the reference
             cursor.execute("""
                 DELETE FROM blob_references
-                WHERE blob_id = ? AND channel_id = ? AND uploaded_by = ?
-            """, (blob_id, channel_id, uploaded_by))
+                WHERE blob_id = ? AND space_id = ? AND uploaded_by = ?
+            """, (blob_id, space_id, uploaded_by))
 
             if cursor.rowcount == 0:
                 # Reference didn't exist

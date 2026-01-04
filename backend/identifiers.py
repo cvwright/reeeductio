@@ -18,7 +18,7 @@ from typing import Union
 
 class IdType(Enum):
     """Identifier type codes using the first 6 bits of the header byte"""
-    CHANNEL = 0b000010  # 'C' in base64 (2)
+    SPACE = 0b000010  # 'C' in base64 (2)
     MESSAGE = 0b001100  # 'M' in base64 (12)
     USER = 0b010100     # 'U' in base64 (20)
     BLOB = 0b000001     # 'B' in base64 (1)
@@ -27,7 +27,7 @@ class IdType(Enum):
 
 # Base64 character mappings for the type codes
 TYPE_TO_CHAR = {
-    IdType.CHANNEL: 'C',  # 0b000010 = 2  -> 'C' in standard base64
+    IdType.SPACE: 'C',  # 0b000010 = 2  -> 'C' in standard base64
     IdType.MESSAGE: 'M',  # 0b001100 = 12 -> 'M'
     IdType.USER: 'U',     # 0b010100 = 20 -> 'U'
     IdType.BLOB: 'B',     # 0b000001 = 1  -> 'B'
@@ -47,7 +47,7 @@ class TypedIdentifier:
         Create a typed identifier
 
         Args:
-            id_type: The type of identifier (CHANNEL, MESSAGE, USER, BLOB)
+            id_type: The type of identifier (SPACE, MESSAGE, USER, BLOB)
             data: 32 bytes of cryptographic data (Ed25519 key or SHA256 hash)
             version: Version number (0-3, uses last 2 bits)
 
@@ -144,7 +144,7 @@ class TypedIdentifier:
 
         Args:
             public_key_bytes: 32-byte Ed25519 public key
-            id_type: Type of identifier (typically CHANNEL or USER)
+            id_type: Type of identifier (typically SPACE or USER)
 
         Returns:
             TypedIdentifier instance
@@ -184,9 +184,9 @@ class TypedIdentifier:
 
 # Convenience functions for common use cases
 
-def encode_channel_id(public_key_bytes: bytes) -> str:
+def encode_space_id(public_key_bytes: bytes) -> str:
     """
-    Encode a channel public key (Ed25519) as a typed identifier
+    Encode a space public key (Ed25519) as a typed identifier
 
     Args:
         public_key_bytes: 32-byte Ed25519 public key
@@ -194,7 +194,7 @@ def encode_channel_id(public_key_bytes: bytes) -> str:
     Returns:
         44-character base64 string starting with type indicator
     """
-    tid = TypedIdentifier.from_ed25519_public_key(public_key_bytes, IdType.CHANNEL)
+    tid = TypedIdentifier.from_ed25519_public_key(public_key_bytes, IdType.SPACE)
     return tid.to_base64()
 
 
@@ -267,22 +267,22 @@ def decode_identifier(encoded: str) -> TypedIdentifier:
     return TypedIdentifier.from_base64(encoded)
 
 
-def extract_public_key(channel_user_or_tool_id: str) -> bytes:
+def extract_public_key(space_user_or_tool_id: str) -> bytes:
     """
-    Extract the raw 32-byte public key from a channel, user, or tool identifier
+    Extract the raw 32-byte public key from a space, user, or tool identifier
 
     Args:
-        channel_user_or_tool_id: 44-character typed identifier
+        space_user_or_tool_id: 44-character typed identifier
 
     Returns:
         32-byte public key
 
     Raises:
-        ValueError: If identifier is not a CHANNEL, USER, or TOOL type
+        ValueError: If identifier is not a SPACE, USER, or TOOL type
     """
-    tid = TypedIdentifier.from_base64(channel_user_or_tool_id)
-    if tid.id_type not in (IdType.CHANNEL, IdType.USER, IdType.TOOL):
-        raise ValueError(f"Identifier must be CHANNEL, USER, or TOOL type, got {tid.id_type.name}")
+    tid = TypedIdentifier.from_base64(space_user_or_tool_id)
+    if tid.id_type not in (IdType.SPACE, IdType.USER, IdType.TOOL):
+        raise ValueError(f"Identifier must be SPACE, USER, or TOOL type, got {tid.id_type.name}")
     return tid.data
 
 

@@ -21,13 +21,13 @@ sign_and_store_state = conftest.sign_and_store_state
 # Generic Test Functions
 # ============================================================================
 
-def generic_state_set_and_get(state_store: StateStore, channel_id: str, admin_keypair: dict):
+def generic_state_set_and_get(state_store: StateStore, space_id: str, admin_keypair: dict):
     """Generic test for basic state set and get operations"""
     data = {"public_key": "alice_key", "added_at": 12345}
 
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="members/alice",
         contents=data,
         signer_private_key=admin_keypair['private'],
@@ -35,7 +35,7 @@ def generic_state_set_and_get(state_store: StateStore, channel_id: str, admin_ke
         signed_at=12345
     )
 
-    state = state_store.get_state(channel_id, "members/alice")
+    state = state_store.get_state(space_id, "members/alice")
     assert state is not None
     decoded_data = json.loads(base64.b64decode(state["data"]))
     assert decoded_data["public_key"] == "alice_key"
@@ -43,12 +43,12 @@ def generic_state_set_and_get(state_store: StateStore, channel_id: str, admin_ke
     assert state["signed_at"] == 12345
 
 
-def generic_state_update(state_store: StateStore, channel_id: str, admin_keypair: dict, user_keypair: dict):
+def generic_state_update(state_store: StateStore, space_id: str, admin_keypair: dict, user_keypair: dict):
     """Generic test for updating existing state"""
     data1 = {"value": 1}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="config/setting",
         contents=data1,
         signer_private_key=admin_keypair['private'],
@@ -60,7 +60,7 @@ def generic_state_update(state_store: StateStore, channel_id: str, admin_keypair
     data2 = {"value": 2}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="config/setting",
         contents=data2,
         signer_private_key=admin_keypair['private'],
@@ -68,7 +68,7 @@ def generic_state_update(state_store: StateStore, channel_id: str, admin_keypair
         signed_at=200
     )
 
-    state = state_store.get_state(channel_id, "config/setting")
+    state = state_store.get_state(space_id, "config/setting")
     assert state is not None
     decoded_data = json.loads(base64.b64decode(state["data"]))
     assert decoded_data["value"] == 2
@@ -76,13 +76,13 @@ def generic_state_update(state_store: StateStore, channel_id: str, admin_keypair
     assert state["signed_at"] == 200
 
 
-def generic_state_delete(state_store: StateStore, channel_id: str, admin_keypair: dict):
+def generic_state_delete(state_store: StateStore, space_id: str, admin_keypair: dict):
     """Generic test for state deletion"""
     data = {"test": "data"}
 
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="temp/data",
         contents=data,
         signer_private_key=admin_keypair['private'],
@@ -91,16 +91,16 @@ def generic_state_delete(state_store: StateStore, channel_id: str, admin_keypair
     )
 
     # Verify it exists
-    assert state_store.get_state(channel_id, "temp/data") is not None
+    assert state_store.get_state(space_id, "temp/data") is not None
 
     # Delete it
-    state_store.delete_state(channel_id, "temp/data")
+    state_store.delete_state(space_id, "temp/data")
 
     # Verify it's gone
-    assert state_store.get_state(channel_id, "temp/data") is None
+    assert state_store.get_state(space_id, "temp/data") is None
 
 
-def generic_state_list_by_prefix(state_store: StateStore, channel_id: str, admin_keypair: dict):
+def generic_state_list_by_prefix(state_store: StateStore, space_id: str, admin_keypair: dict):
     """Generic test for listing state by prefix"""
     # Create multiple state entries
     for i in range(5):
@@ -108,7 +108,7 @@ def generic_state_list_by_prefix(state_store: StateStore, channel_id: str, admin
 
         sign_and_store_state(
             state_store=state_store,
-            channel_id=channel_id,
+            space_id=space_id,
             path=f"members-count/user{i}",
             contents=data,
             signer_private_key=admin_keypair['private'],
@@ -122,7 +122,7 @@ def generic_state_list_by_prefix(state_store: StateStore, channel_id: str, admin
 
         sign_and_store_state(
             state_store=state_store,
-            channel_id=channel_id,
+            space_id=space_id,
             path=f"config-count/setting{i}",
             contents=data,
             signer_private_key=admin_keypair['private'],
@@ -131,31 +131,31 @@ def generic_state_list_by_prefix(state_store: StateStore, channel_id: str, admin
         )
 
     # List members
-    members = state_store.list_state(channel_id, "members-count/")
+    members = state_store.list_state(space_id, "members-count/")
     assert len(members) == 5
     for member in members:
         assert member["path"].startswith("members-count/")
 
     # List config
-    configs = state_store.list_state(channel_id, "config-count/")
+    configs = state_store.list_state(space_id, "config-count/")
     assert len(configs) == 3
     for config in configs:
         assert config["path"].startswith("config-count/")
 
 
-def generic_state_nonexistent(state_store: StateStore, channel_id: str):
+def generic_state_nonexistent(state_store: StateStore, space_id: str):
     """Generic test for getting nonexistent state"""
-    state = state_store.get_state(channel_id, "does/not/exist")
+    state = state_store.get_state(space_id, "does/not/exist")
     assert state is None
 
 
-def generic_state_multiple_channels(state_store: StateStore, channel_id: str, admin_keypair: dict):
-    """Generic test for state isolation between channels"""
+def generic_state_multiple_spaces(state_store: StateStore, space_id: str, admin_keypair: dict):
+    """Generic test for state isolation between spaces"""
     data = {"test": "data"}
 
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="config/setting",
         contents=data,
         signer_private_key=admin_keypair['private'],
@@ -163,9 +163,9 @@ def generic_state_multiple_channels(state_store: StateStore, channel_id: str, ad
         signed_at=100
     )
 
-    # Should not be visible in a different channel
-    other_channel_id = f"{channel_id}-other"
-    assert state_store.get_state(other_channel_id, "config/setting") is None
+    # Should not be visible in a different space
+    other_space_id = f"{space_id}-other"
+    assert state_store.get_state(other_space_id, "config/setting") is None
 
 
 # ============================================================================
@@ -173,26 +173,26 @@ def generic_state_multiple_channels(state_store: StateStore, channel_id: str, ad
 # ============================================================================
 
 def test_sqlite_state_set_and_get(sqlite_state_store, admin_keypair):
-    channel_id = admin_keypair['channel_id']
-    generic_state_set_and_get(sqlite_state_store, channel_id, admin_keypair)
+    space_id = admin_keypair['space_id']
+    generic_state_set_and_get(sqlite_state_store, space_id, admin_keypair)
 
 def test_sqlite_state_update(sqlite_state_store, admin_keypair, user_keypair):
-    channel_id = admin_keypair['channel_id']
-    generic_state_update(sqlite_state_store, channel_id, admin_keypair, user_keypair)
+    space_id = admin_keypair['space_id']
+    generic_state_update(sqlite_state_store, space_id, admin_keypair, user_keypair)
 
 def test_sqlite_state_delete(sqlite_state_store, admin_keypair):
-    channel_id = admin_keypair['channel_id']
-    generic_state_delete(sqlite_state_store, channel_id, admin_keypair)
+    space_id = admin_keypair['space_id']
+    generic_state_delete(sqlite_state_store, space_id, admin_keypair)
 
 def test_sqlite_state_list_by_prefix(sqlite_state_store, admin_keypair):
-    channel_id = admin_keypair['channel_id']
-    generic_state_list_by_prefix(sqlite_state_store, channel_id, admin_keypair)
+    space_id = admin_keypair['space_id']
+    generic_state_list_by_prefix(sqlite_state_store, space_id, admin_keypair)
 
 def test_sqlite_state_nonexistent(sqlite_state_store, admin_keypair):
-    channel_id = admin_keypair['channel_id']
-    generic_state_nonexistent(sqlite_state_store, channel_id)
+    space_id = admin_keypair['space_id']
+    generic_state_nonexistent(sqlite_state_store, space_id)
 
-def test_sqlite_state_multiple_channels(sqlite_state_store, admin_keypair):
-    channel_id = admin_keypair['channel_id']
-    generic_state_multiple_channels(sqlite_state_store, channel_id, admin_keypair)
+def test_sqlite_state_multiple_spaces(sqlite_state_store, admin_keypair):
+    space_id = admin_keypair['space_id']
+    generic_state_multiple_spaces(sqlite_state_store, space_id, admin_keypair)
 

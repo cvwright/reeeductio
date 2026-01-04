@@ -3,7 +3,7 @@
 Example client for E2EE messaging system
 
 Demonstrates:
-- Channel creation (offline)
+- Space creation (offline)
 - User authentication
 - Capability management
 - Message posting and retrieval
@@ -49,13 +49,13 @@ class Ed25519KeyPair:
         return base64.b64encode(self.sign(message)).decode('utf-8')
 
 
-class ChannelBootstrap:
-    """Bootstrap a new channel with initial state"""
+class SpaceBootstrap:
+    """Bootstrap a new space with initial state"""
     
     def __init__(self):
-        # Generate channel keypair
-        self.channel_keypair = Ed25519KeyPair()
-        self.channel_id = self.channel_keypair.public_key_b64()
+        # Generate space keypair
+        self.space_keypair = Ed25519KeyPair()
+        self.space_id = self.space_keypair.public_key_b64()
         
         # Generate symmetric key for message encryption
         import secrets
@@ -65,8 +65,8 @@ class ChannelBootstrap:
         # Generate join keypair
         self.join_keypair = Ed25519KeyPair()
         
-        print(f"Channel created!")
-        print(f"Channel ID: {self.channel_id}")
+        print(f"Space created!")
+        print(f"Space ID: {self.space_id}")
         print(f"Symmetric Key: {self.symmetric_key_b64}")
         print(f"Join Key Public: {self.join_keypair.public_key_b64()}")
     
@@ -75,7 +75,7 @@ class ChannelBootstrap:
         return {
             "public_key": public_key,
             "added_at": int(time.time() * 1000),  # milliseconds
-            "added_by": self.channel_id
+            "added_by": self.space_id
         }
     
     def create_capability(
@@ -90,7 +90,7 @@ class ChannelBootstrap:
         
         # Construct message to sign
         message = (
-            f"{self.channel_id}|{recipient_public_key}|"
+            f"{self.space_id}|{recipient_public_key}|"
             f"{op}|{path}|{granted_at}"
         )
         
@@ -106,20 +106,20 @@ class ChannelBootstrap:
     
     def generate_initial_state(self) -> dict:
         """
-        Generate initial channel state to be uploaded to server
+        Generate initial space state to be uploaded to server
         
         This would normally be done via API calls, but we're showing
         the structure here for educational purposes.
         """
-        # Add channel creator as member
-        creator_member = self.create_member_state(self.channel_id)
+        # Add space creator as member
+        creator_member = self.create_member_state(self.space_id)
         
-        # Grant channel creator admin rights
+        # Grant space creator admin rights
         creator_admin_cap = self.create_capability(
-            self.channel_id,
+            self.space_id,
             "write",
             "/state/*",
-            self.channel_keypair
+            self.space_keypair
         )
         
         # Add join key as member
@@ -130,7 +130,7 @@ class ChannelBootstrap:
             self.join_keypair.public_key_b64(),
             "create",
             "/state/members/",
-            self.channel_keypair
+            self.space_keypair
         )
         
         # Grant join key ability to grant basic capabilities
@@ -138,7 +138,7 @@ class ChannelBootstrap:
             self.join_keypair.public_key_b64(),
             "create",
             "/state/members/*/rights/",
-            self.channel_keypair
+            self.space_keypair
         )
         
         # Also grant join key the capabilities it will grant to new members
@@ -147,19 +147,19 @@ class ChannelBootstrap:
             self.join_keypair.public_key_b64(),
             "read",
             "/state/*",
-            self.channel_keypair
+            self.space_keypair
         )
         
         join_post_cap = self.create_capability(
             self.join_keypair.public_key_b64(),
             "create",
             "/state/topics/*/messages/",
-            self.channel_keypair
+            self.space_keypair
         )
         
         return {
             "members": {
-                self.channel_id: creator_member,
+                self.space_id: creator_member,
                 self.join_keypair.public_key_b64(): join_member
             },
             "capabilities": {
@@ -174,7 +174,7 @@ class ChannelBootstrap:
     def generate_qr_data(self) -> dict:
         """Generate data to encode in QR code for joining"""
         return {
-            "channel_id": self.channel_id,
+            "space_id": self.space_id,
             "symmetric_key": self.symmetric_key_b64,
             "join_private_key": base64.b64encode(
                 self.join_keypair.private_key.private_bytes(
@@ -189,8 +189,8 @@ class ChannelBootstrap:
 class MessageClient:
     """Client for posting and reading messages"""
     
-    def __init__(self, channel_id: str, symmetric_key: bytes):
-        self.channel_id = channel_id
+    def __init__(self, space_id: str, symmetric_key: bytes):
+        self.space_id = space_id
         self.symmetric_key = symmetric_key
     
     def compute_message_hash(
@@ -204,7 +204,7 @@ class MessageClient:
         prev_hash_str = prev_hash if prev_hash else "null"
 
         message_data = (
-            f"{self.channel_id}|{topic_id}|{prev_hash_str}|{encrypted_payload}|{sender}"
+            f"{self.space_id}|{topic_id}|{prev_hash_str}|{encrypted_payload}|{sender}"
         )
 
         hash_bytes = hashlib.sha256(message_data.encode('utf-8')).digest()
@@ -212,11 +212,11 @@ class MessageClient:
     
     def encrypt_message(self, plaintext: str) -> str:
         """
-        Encrypt message with channel symmetric key
+        Encrypt message with space symmetric key
         
         Note: This is a simplified example. In production, use proper
         authenticated encryption (e.g., AES-GCM) and derive per-message
-        keys from the channel key + message context.
+        keys from the space key + message context.
         """
         # For demo purposes, just base64 encode
         # In production: use AES-GCM or ChaCha20-Poly1305
@@ -257,34 +257,34 @@ class MessageClient:
 
 
 def example_bootstrap():
-    """Example: Bootstrap a new channel"""
+    """Example: Bootstrap a new space"""
     print("=" * 60)
-    print("EXAMPLE: Channel Bootstrap")
+    print("EXAMPLE: Space Bootstrap")
     print("=" * 60)
     
-    # Create channel
-    channel = ChannelBootstrap()
+    # Create space
+    space = SpaceBootstrap()
     
     # Generate initial state
-    initial_state = channel.generate_initial_state()
+    initial_state = space.generate_initial_state()
     print("\nInitial state structure:")
     print(json.dumps(initial_state, indent=2))
     
     # Generate QR code data
-    qr_data = channel.generate_qr_data()
+    qr_data = space.generate_qr_data()
     print("\nQR Code data (share this to invite users):")
     print(json.dumps(qr_data, indent=2))
     
-    return channel
+    return space
 
 
-def example_join_channel(qr_data: dict):
-    """Example: Join a channel using QR code data"""
+def example_join_space(qr_data: dict):
+    """Example: Join a space using QR code data"""
     print("\n" + "=" * 60)
-    print("EXAMPLE: Joining Channel")
+    print("EXAMPLE: Joining Space")
     print("=" * 60)
     
-    channel_id = qr_data["channel_id"]
+    space_id = qr_data["space_id"]
     symmetric_key = base64.b64decode(qr_data["symmetric_key"])
     join_private_key_bytes = base64.b64decode(qr_data["join_private_key"])
     
@@ -314,7 +314,7 @@ def example_join_channel(qr_data: dict):
     
     # Read capability
     read_cap_message = (
-        f"{channel_id}|{personal_keypair.public_key_b64()}|"
+        f"{space_id}|{personal_keypair.public_key_b64()}|"
         f"read|*|{now}"
     )
     read_cap = {
@@ -327,7 +327,7 @@ def example_join_channel(qr_data: dict):
 
     # Post messages capability
     post_cap_message = (
-        f"{channel_id}|{personal_keypair.public_key_b64()}|"
+        f"{space_id}|{personal_keypair.public_key_b64()}|"
         f"create|topics/*/messages/|{now}"
     )
     post_cap = {
@@ -341,12 +341,12 @@ def example_join_channel(qr_data: dict):
     print(f"\nCapabilities to upload:")
     print(json.dumps({"read": read_cap, "post": post_cap}, indent=2))
     
-    return personal_keypair, channel_id, symmetric_key
+    return personal_keypair, space_id, symmetric_key
 
 
 def example_post_message(
     keypair: Ed25519KeyPair,
-    channel_id: str,
+    space_id: str,
     symmetric_key: bytes
 ):
     """Example: Post a message to a topic"""
@@ -354,7 +354,7 @@ def example_post_message(
     print("EXAMPLE: Posting Message")
     print("=" * 60)
     
-    client = MessageClient(channel_id, symmetric_key)
+    client = MessageClient(space_id, symmetric_key)
 
     # Create first message
     message1 = client.create_message(
@@ -385,12 +385,12 @@ def example_post_message(
 
 if __name__ == "__main__":
     # Run examples
-    channel = example_bootstrap()
-    qr_data = channel.generate_qr_data()
+    space = example_bootstrap()
+    qr_data = space.generate_qr_data()
     
-    personal_keypair, channel_id, symmetric_key = example_join_channel(qr_data)
+    personal_keypair, space_id, symmetric_key = example_join_space(qr_data)
     
-    example_post_message(personal_keypair, channel_id, symmetric_key)
+    example_post_message(personal_keypair, space_id, symmetric_key)
     
     print("\n" + "=" * 60)
     print("Examples complete!")

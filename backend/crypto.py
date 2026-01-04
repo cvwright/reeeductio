@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
 from identifiers import (
     TypedIdentifier, IdType,
-    encode_channel_id, encode_user_id, encode_message_id, encode_blob_id,
+    encode_space_id, encode_user_id, encode_message_id, encode_blob_id,
     extract_public_key, extract_hash, decode_identifier
 )
 
@@ -70,7 +70,7 @@ class CryptoUtils:
     
     def compute_message_hash(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         prev_hash: Optional[str],
         encrypted_payload: str,
@@ -83,7 +83,7 @@ class CryptoUtils:
         This is what gets signed and forms the blockchain link.
 
         Args:
-            channel_id: Typed channel identifier (44 chars)
+            space_id: Typed space identifier (44 chars)
             topic_id: Topic identifier string
             prev_hash: Typed message identifier of previous message (or None)
             encrypted_payload: Base64-encoded encrypted content
@@ -96,7 +96,7 @@ class CryptoUtils:
         prev_hash_str = prev_hash if prev_hash else "null"
 
         message_data = (
-            f"{channel_id}|{topic_id}|{prev_hash_str}|{encrypted_payload}|{sender}"
+            f"{space_id}|{topic_id}|{prev_hash_str}|{encrypted_payload}|{sender}"
         )
 
         # Compute SHA256

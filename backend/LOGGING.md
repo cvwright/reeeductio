@@ -8,7 +8,7 @@ The backend uses Python's standard `logging` module with support for:
 - **Multiple output formats**: Text (human-readable) or JSON (structured)
 - **Console and file logging**: With automatic log rotation
 - **Configurable log levels**: DEBUG, INFO, WARNING, ERROR, CRITICAL
-- **Structured logging**: Additional context fields (channel_id, user_id, topic_id, etc.)
+- **Structured logging**: Additional context fields (space_id, user_id, topic_id, etc.)
 
 ## Configuration
 
@@ -63,8 +63,8 @@ Human-readable format, suitable for development:
 
 ```
 2024-01-15 10:30:45 - main - INFO - Application starting: environment=development, debug=True
-2024-01-15 10:30:45 - channel_manager - INFO - Creating new channel instance: ch_123abc
-2024-01-15 10:30:46 - main - INFO - User authenticated: channel=ch_123abc, user=user:abc123def...
+2024-01-15 10:30:45 - space_manager - INFO - Creating new space instance: ch_123abc
+2024-01-15 10:30:46 - main - INFO - User authenticated: space=ch_123abc, user=user:abc123def...
 ```
 
 ### JSON Format (Production)
@@ -73,8 +73,8 @@ Structured format, suitable for log aggregation tools (ELK, Splunk, etc.):
 
 ```json
 {"timestamp": "2024-01-15 10:30:45", "level": "INFO", "logger": "main", "message": "Application starting: environment=production, debug=False"}
-{"timestamp": "2024-01-15 10:30:45", "level": "INFO", "logger": "channel_manager", "message": "Creating new channel instance: ch_123abc", "channel_id": "ch_123abc"}
-{"timestamp": "2024-01-15 10:30:46", "level": "INFO", "logger": "main", "message": "User authenticated", "channel_id": "ch_123abc", "user_id": "user:abc123def456"}
+{"timestamp": "2024-01-15 10:30:45", "level": "INFO", "logger": "space_manager", "message": "Creating new space instance: ch_123abc", "space_id": "ch_123abc"}
+{"timestamp": "2024-01-15 10:30:46", "level": "INFO", "logger": "main", "message": "User authenticated", "space_id": "ch_123abc", "user_id": "user:abc123def456"}
 ```
 
 ## Log Levels
@@ -108,7 +108,7 @@ Add extra context to your logs:
 
 ```python
 logger.info("Message posted", extra={
-    "channel_id": channel_id,
+    "space_id": space_id,
     "topic_id": topic_id,
     "user_id": user_id
 })
@@ -176,7 +176,7 @@ The application logs at these key points:
 - **Startup/Shutdown**: Application lifecycle events
 - **Authentication**: Challenge requests, verifications, failures
 - **Messages**: Message posts, retrievals, errors
-- **Channels**: Channel creation, cache hits
+- **Spaces**: Space creation, cache hits
 - **Errors**: All exception handlers log warnings/errors
 
 ## Troubleshooting

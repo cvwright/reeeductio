@@ -14,7 +14,7 @@ from pathlib import Path
 # Add tests directory to path to import conftest
 sys.path.insert(0, str(Path(__file__).parent))
 
-from main import app, authenticate_websocket, channel_manager
+from main import app, authenticate_websocket, space_manager
 
 import conftest
 sign_state_entry = conftest.sign_state_entry
@@ -26,22 +26,22 @@ class TestWebSocketAuthentication:
     @pytest.mark.asyncio
     async def test_authenticate_websocket_success(self, admin_keypair):
         """Test successful WebSocket authentication"""
-        channel_id = admin_keypair['channel_id']
-        channel = channel_manager.get_channel(channel_id)
-        jwt_data = channel.create_jwt(admin_keypair['user_id'])
+        space_id = admin_keypair['space_id']
+        space = space_manager.get_space(space_id)
+        jwt_data = space.create_jwt(admin_keypair['user_id'])
         token = jwt_data['token']
 
-        result = await authenticate_websocket(channel_id, token)
+        result = await authenticate_websocket(space_id, token)
         print("Got websocket result =", result)
 
-        assert result['channel_id'] == channel_id
+        assert result['space_id'] == space_id
         assert result['id'] == admin_keypair['user_id']
 
     @pytest.mark.asyncio
     async def test_authenticate_websocket_no_token(self):
         """Test WebSocket authentication fails without token"""
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            await authenticate_websocket("test_channel", None)
+            await authenticate_websocket("test_space", None)
 
         assert exc_info.value.code == 1008
         assert "Authentication required" in exc_info.value.reason
@@ -50,23 +50,23 @@ class TestWebSocketAuthentication:
     async def test_authenticate_websocket_invalid_token(self):
         """Test WebSocket authentication fails with invalid token"""
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            await authenticate_websocket("test_channel", "invalid_token")
+            await authenticate_websocket("test_space", "invalid_token")
 
         assert exc_info.value.code == 1008
 
     @pytest.mark.asyncio
-    async def test_authenticate_websocket_wrong_channel(self, admin_keypair):
-        """Test WebSocket authentication fails with wrong channel"""
-        channel_id = admin_keypair['channel_id']
-        channel = channel_manager.get_channel(channel_id)
-        jwt_data = channel.create_jwt(admin_keypair['user_id'])
+    async def test_authenticate_websocket_wrong_space(self, admin_keypair):
+        """Test WebSocket authentication fails with wrong space"""
+        space_id = admin_keypair['space_id']
+        space = space_manager.get_space(space_id)
+        jwt_data = space.create_jwt(admin_keypair['user_id'])
         token = jwt_data['token']
 
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            await authenticate_websocket("different_channel", token)
+            await authenticate_websocket("different_space", token)
 
         assert exc_info.value.code == 1008
-        assert "Token channel mismatch" in exc_info.value.reason
+        assert "Token space mismatch" in exc_info.value.reason
 
 
 class TestWebSocketEndpoint:
@@ -79,25 +79,25 @@ class TestWebSocketEndpoint:
 
     def test_websocket_connect_without_token(self, client, admin_keypair):
         """Test WebSocket connection fails without token"""
-        channel_id = admin_keypair['channel_id']
+        space_id = admin_keypair['space_id']
 
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(f"/channels/{channel_id}/stream"):
+            with client.websocket_connect(f"/spaces/{space_id}/stream"):
                 pass
 
     def test_websocket_connect_with_invalid_token(self, client, admin_keypair):
         """Test WebSocket connection fails with invalid token"""
-        channel_id = admin_keypair['channel_id']
+        space_id = admin_keypair['space_id']
 
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(
-                f"/channels/{channel_id}/stream?token=invalid_token"
+                f"/spaces/{space_id}/stream?token=invalid_token"
             ):
                 pass
 
     def test_websocket_connect_success(self, client, admin_keypair, state_store):
         """Test successful WebSocket connection"""
-        channel_id = admin_keypair['channel_id']
+        space_id = admin_keypair['space_id']
         user_id = admin_keypair['user_id']
 
         # Add user as member
@@ -106,7 +106,7 @@ class TestWebSocketEndpoint:
         }
         sign_and_store_state(
             state_store=state_store,
-            channel_id=channel_id,
+            space_id=space_id,
             path=f"auth/users/{user_id}",
             contents=member_data,
             signer_private_key=admin_keypair['private'],
@@ -115,13 +115,13 @@ class TestWebSocketEndpoint:
         )
 
         # Create JWT token
-        channel = channel_manager.get_channel(channel_id)
-        jwt_data = channel.create_jwt(user_id)
+        space = space_manager.get_space(space_id)
+        jwt_data = space.create_jwt(user_id)
         token = jwt_data['token']
 
         # Connect via WebSocket
         with client.websocket_connect(
-            f"/channels/{channel_id}/stream?token={token}"
+            f"/spaces/{space_id}/stream?token={token}"
         ) as websocket:
             # Send ping
             websocket.send_text("ping")
@@ -132,7 +132,7 @@ class TestWebSocketEndpoint:
 
     def test_websocket_receives_broadcast(self, client, admin_keypair, state_store):
         """Test WebSocket receives broadcast messages"""
-        channel_id = admin_keypair['channel_id']
+        space_id = admin_keypair['space_id']
         user_id = admin_keypair['user_id']
 
         # Add user as member
@@ -141,7 +141,7 @@ class TestWebSocketEndpoint:
         }
         sign_and_store_state(
             state_store=state_store,
-            channel_id=channel_id,
+            space_id=space_id,
             path=f"auth/users/{user_id}",
             contents=member_data,
             signer_private_key=admin_keypair['private'],
@@ -150,13 +150,13 @@ class TestWebSocketEndpoint:
         )
 
         # Create JWT token
-        channel = channel_manager.get_channel(channel_id)
-        jwt_data = channel.create_jwt(user_id)
+        space = space_manager.get_space(space_id)
+        jwt_data = space.create_jwt(user_id)
         token = jwt_data['token']
 
         # Connect via WebSocket
         with client.websocket_connect(
-            f"/channels/{channel_id}/stream?token={token}"
+            f"/spaces/{space_id}/stream?token={token}"
         ) as websocket:
             # Simulate a broadcast from the server
             import asyncio
@@ -170,8 +170,8 @@ class TestWebSocketEndpoint:
                 "server_timestamp": 12345000
             }
 
-            # Broadcast message via channel
-            asyncio.run(channel.broadcast_message(message))
+            # Broadcast message via space
+            asyncio.run(space.broadcast_message(message))
 
             # Receive the broadcast
             data = websocket.receive_text()
@@ -190,7 +190,7 @@ class TestWebSocketMessageBroadcasting:
         self, message_store, state_store, crypto, authz, admin_keypair
     ):
         """Test that posting a message broadcasts to WebSocket clients"""
-        channel_id = admin_keypair['channel_id']
+        space_id = admin_keypair['space_id']
         admin_id = admin_keypair['user_id']
         admin_private = admin_keypair['private']
 
@@ -200,22 +200,22 @@ class TestWebSocketMessageBroadcasting:
         ws2 = AsyncMock(spec=WebSocket)
         ws2.send_text = AsyncMock()
 
-        # Get channel and add connections directly to it
-        channel = channel_manager.get_channel(channel_id)
-        channel.websockets = {ws1, ws2}
+        # Get space and add connections directly to it
+        space = space_manager.get_space(space_id)
+        space.websockets = {ws1, ws2}
 
         # Post a message (this should trigger broadcast)
         topic_id = "general-chat"
         encrypted_payload = "encrypted_content"
         msg_hash = crypto.compute_message_hash(
-            channel_id, topic_id, None, encrypted_payload, admin_id
+            space_id, topic_id, None, encrypted_payload, admin_id
         )
         signature = crypto.base64_encode(
             admin_private.sign(msg_hash.encode('utf-8'))
         )
 
         message_store.add_message(
-            channel_id=channel_id,
+            space_id=space_id,
             topic_id=topic_id,
             message_hash=msg_hash,
             prev_hash=None,
@@ -235,7 +235,7 @@ class TestWebSocketMessageBroadcasting:
             "signature": signature,
             "server_timestamp": 12345000
         }
-        await channel.broadcast_message(message_dict)
+        await space.broadcast_message(message_dict)
 
         # Verify both connections received the message
         ws1.send_text.assert_called_once()

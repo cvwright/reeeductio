@@ -17,7 +17,7 @@ This E2E encrypted pubsub system now uses **typed identifiers** with a 264-bit f
 
 | Type    | First Char | 6-bit Value | Binary   | Purpose                    |
 |---------|-----------|-------------|----------|----------------------------|
-| Channel | `C`       | 2           | 000010   | Ed25519 channel public key |
+| Space | `C`       | 2           | 000010   | Ed25519 space public key |
 | User    | `U`       | 20          | 010100   | Ed25519 user public key    |
 | Tool    | `T`       | 19          | 010011   | Ed25519 tool public key    |
 | Message | `M`       | 12          | 001100   | SHA256 message hash        |
@@ -35,7 +35,7 @@ This E2E encrypted pubsub system now uses **typed identifiers** with a 264-bit f
 ## Examples
 
 ```
-Channel ID: CDlvwh-oQw-d-_52f0hhmcrrPQ0U-OWQ__W8_xRX5vnk
+Space ID: CDlvwh-oQw-d-_52f0hhmcrrPQ0U-OWQ__W8_xRX5vnk
 User ID:    UDlvwh-oQw-d-_52f0hhmcrrPQ0U-OWQ__W8_xRX5vnk
 Tool ID:    TDlvwh-oQw-d-_52f0hhmcrrPQ0U-OWQ__W8_xRX5vnk
 Message ID: MM-q0VU7Bk8QX-pfJA1GM-KVashl_taBkA1A9n-_lMpZ
@@ -45,7 +45,7 @@ Blob ID:    BM-q0VU7Bk8QX-pfJA1GM-KVashl_taBkA1A9n-_lMpZ
 ## Benefits
 
 1. **URL-safe**: Can be used directly in URLs without encoding
-2. **Type-safe**: Header prevents mixing channel IDs with message hashes
+2. **Type-safe**: Header prevents mixing space IDs with message hashes
 3. **Clean encoding**: 264 bits → exactly 44 base64 chars (no padding)
 4. **Versioned**: 2-bit version field for future format evolution
 5. **Intent verification**: Signatures over full identifier (header + data) prove intent
@@ -56,7 +56,7 @@ Blob ID:    BM-q0VU7Bk8QX-pfJA1GM-KVashl_taBkA1A9n-_lMpZ
 
 ```python
 from identifiers import (
-    encode_channel_id,
+    encode_space_id,
     encode_user_id,
     encode_tool_id,
     encode_message_id,
@@ -64,7 +64,7 @@ from identifiers import (
 )
 
 # From Ed25519 public key (32 bytes)
-channel_id = encode_channel_id(public_key_bytes)
+space_id = encode_space_id(public_key_bytes)
 user_id = encode_user_id(public_key_bytes)
 tool_id = encode_tool_id(public_key_bytes)
 
@@ -78,8 +78,8 @@ blob_id = encode_blob_id(hash_bytes)
 ```python
 from identifiers import extract_public_key, extract_hash
 
-# Extract 32-byte public key from channel or user ID
-pubkey_bytes = extract_public_key(channel_id)  # Validates type
+# Extract 32-byte public key from space or user ID
+pubkey_bytes = extract_public_key(space_id)  # Validates type
 
 # Extract 32-byte hash from message or blob ID
 hash_bytes = extract_hash(message_id)  # Validates type
@@ -91,8 +91,8 @@ hash_bytes = extract_hash(message_id)  # Validates type
 from identifiers import decode_identifier, IdType
 
 # Decode any typed identifier
-tid = decode_identifier(channel_id)
-print(tid.id_type)     # IdType.CHANNEL
+tid = decode_identifier(space_id)
+print(tid.id_type)     # IdType.SPACE
 print(tid.version)     # 0
 print(tid.data.hex())  # Raw 32-byte data as hex
 ```
@@ -121,7 +121,7 @@ def verify_message_signature(message_hash: str, signature: bytes,
 ```python
 # Automatically returns typed message identifier
 message_hash = crypto.compute_message_hash(
-    channel_id,    # Typed channel ID
+    space_id,    # Typed space ID
     topic_id,      # String
     prev_hash,     # Typed message ID or None
     payload,       # Base64 encrypted content

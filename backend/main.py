@@ -2,7 +2,7 @@
 E2EE PubSub Messaging System - Main Application
 
 A capability-based, end-to-end encrypted messaging system with:
-- Channel-scoped access control
+- Space-scoped access control
 - Blockchain-style message chains per topic
 - Granular, signed capabilities
 - Zero-knowledge server design
@@ -25,7 +25,7 @@ from sqlite_blob_store import SqliteBlobStore
 from filesystem_blob_store import FilesystemBlobStore
 from firestore_state_store import FirestoreStateStore
 from firestore_message_store import FirestoreMessageStore
-from channel_manager import ChannelManager
+from space_manager import SpaceManager
 from logging_config import setup_logging, get_logger
 
 # Load configuration
@@ -80,14 +80,14 @@ if isinstance(config.database, FirestoreDatabaseConfig):
     state_store_factory = lambda: FirestoreStateStore(project_id, database_id)
     message_store_factory = lambda: FirestoreMessageStore(project_id, database_id)
 else:
-    logger.info("Using SQLite database (per-channel stores)")
-# else: SQLite (default) - ChannelManager creates per-channel stores
+    logger.info("Using SQLite database (per-space stores)")
+# else: SQLite (default) - SpaceManager creates per-space stores
 
 # Initialize components
-logger.info("Initializing channel manager")
-channel_manager = ChannelManager(
-    base_storage_dir="channels",
-    max_cached_channels=1000,
+logger.info("Initializing space manager")
+space_manager = SpaceManager(
+    base_storage_dir="spaces",
+    max_cached_spaces=1000,
     state_store_factory=state_store_factory,
     message_store_factory=message_store_factory,
     blob_store=blob_store,
@@ -139,7 +139,7 @@ class TokenResponse(BaseModel):
 
 class StateData(BaseModel):
     data: str = Field(..., description="Base64-encoded state data")
-    signature: str = Field(..., description="Ed25519 signature over (channel_id|path|data|signed_at)")
+    signature: str = Field(..., description="Ed25519 signature over (space_id|path|data|signed_at)")
     signed_by: str = Field(..., description="Typed user/tool identifier of signer")
     signed_at: int = Field(..., description="Unix timestamp in milliseconds when entry was signed")
 
@@ -189,15 +189,15 @@ class ErrorResponse(BaseModel):
 # Authentication Endpoints
 # ============================================================================
 
-@app.post("/channels/{channel_id}/auth/challenge", response_model=ChallengeResponse)
+@app.post("/spaces/{space_id}/auth/challenge", response_model=ChallengeResponse)
 async def auth_challenge(
-    channel_id: str,
+    space_id: str,
     request: ChallengeRequest
 ):
     """Request an authentication challenge (random nonce to sign)"""
-    logger.debug(f"Challenge requested: channel={channel_id}, user={request.public_key[:16]}...")
-    channel = channel_manager.get_channel(channel_id)
-    result = channel.create_challenge(request.public_key, CHALLENGE_EXPIRY_SECONDS)
+    logger.debug(f"Challenge requested: space={space_id}, user={request.public_key[:16]}...")
+    space = space_manager.get_space(space_id)
+    result = space.create_challenge(request.public_key, CHALLENGE_EXPIRY_SECONDS)
 
     return ChallengeResponse(
         challenge=result["challenge"],
@@ -205,25 +205,25 @@ async def auth_challenge(
     )
 
 
-@app.post("/channels/{channel_id}/auth/verify", response_model=TokenResponse)
+@app.post("/spaces/{space_id}/auth/verify", response_model=TokenResponse)
 async def auth_verify(
-    channel_id: str,
+    space_id: str,
     request: VerifyRequest
 ):
     """Verify signed challenge and issue JWT token"""
-    channel = channel_manager.get_channel(channel_id)
+    space = space_manager.get_space(space_id)
 
     try:
-        channel.verify_challenge(
+        space.verify_challenge(
             request.public_key,
             request.challenge,
             request.signature
         )
-        logger.info(f"User authenticated: channel={channel_id}, user={request.public_key[:16]}...")
+        logger.info(f"User authenticated: space={space_id}, user={request.public_key[:16]}...")
     except ValueError as e:
         # Map ValueError to appropriate HTTP status
         error_msg = str(e)
-        logger.warning(f"Authentication failed: channel={channel_id}, user={request.public_key[:16]}..., error={error_msg}")
+        logger.warning(f"Authentication failed: space={space_id}, user={request.public_key[:16]}..., error={error_msg}")
         if "not found" in error_msg or "expired" in error_msg or "mismatch" in error_msg:
             raise HTTPException(status_code=401, detail=error_msg)
         elif "Invalid" in error_msg:
@@ -237,19 +237,19 @@ async def auth_verify(
             raise HTTPException(status_code=401, detail=error_msg)
 
     # Issue JWT
-    return channel.create_jwt(request.public_key)
+    return space.create_jwt(request.public_key)
 
 
-@app.post("/channels/{channel_id}/auth/refresh", response_model=TokenResponse)
+@app.post("/spaces/{space_id}/auth/refresh", response_model=TokenResponse)
 async def auth_refresh(
-    channel_id: str,
+    space_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Refresh JWT token"""
-    channel = channel_manager.get_channel(channel_id)
+    space = space_manager.get_space(space_id)
 
     try:
-        return channel.refresh_jwt(credentials.credentials)
+        return space.refresh_jwt(credentials.credentials)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
@@ -258,17 +258,17 @@ async def auth_refresh(
 # State Endpoints
 # ============================================================================
 
-@app.get("/channels/{channel_id}/state/{path:path}", response_model=StateResponse)
+@app.get("/spaces/{space_id}/state/{path:path}", response_model=StateResponse)
 async def get_state(
-    channel_id: str,
+    space_id: str,
     path: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Get state value from channel"""
-    channel = channel_manager.get_channel(channel_id)
+    """Get state value from space"""
+    space = space_manager.get_space(space_id)
 
     try:
-        state = channel.get_state(path, credentials.credentials)
+        state = space.get_state(path, credentials.credentials)
         return StateResponse(**state)
     except ValueError as e:
         error_msg = str(e)
@@ -280,18 +280,18 @@ async def get_state(
             raise HTTPException(status_code=401, detail=error_msg)
 
 
-@app.put("/channels/{channel_id}/state/{path:path}")
+@app.put("/spaces/{space_id}/state/{path:path}")
 async def put_state(
-    channel_id: str,
+    space_id: str,
     path: str,
     state_data: StateData,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Set state value in channel"""
-    channel = channel_manager.get_channel(channel_id)
+    """Set state value in space"""
+    space = space_manager.get_space(space_id)
 
     try:
-        updated_at = channel.set_state(
+        updated_at = space.set_state(
             path,
             state_data.data,
             credentials.credentials,
@@ -310,17 +310,17 @@ async def put_state(
             raise HTTPException(status_code=401, detail=error_msg)
 
 
-@app.delete("/channels/{channel_id}/state/{path:path}")
+@app.delete("/spaces/{space_id}/state/{path:path}")
 async def delete_state(
-    channel_id: str,
+    space_id: str,
     path: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Delete state value from channel"""
-    channel = channel_manager.get_channel(channel_id)
+    """Delete state value from space"""
+    space = space_manager.get_space(space_id)
 
     try:
-        channel.delete_state(path, credentials.credentials)
+        space.delete_state(path, credentials.credentials)
         return Response(status_code=204)
     except ValueError as e:
         error_msg = str(e)
@@ -336,9 +336,9 @@ async def delete_state(
 # Message Endpoints
 # ============================================================================
 
-@app.get("/channels/{channel_id}/topics/{topic_id}/messages", response_model=MessagesResponse)
+@app.get("/spaces/{space_id}/topics/{topic_id}/messages", response_model=MessagesResponse)
 async def get_messages(
-    channel_id: str,
+    space_id: str,
     topic_id: str,
     from_ts: Optional[int] = Query(None, alias="from"),
     to_ts: Optional[int] = Query(None, alias="to"),
@@ -347,10 +347,10 @@ async def get_messages(
 ):
     """Query messages in a topic with time-based filtering"""
     validate_topic_id(topic_id)
-    channel = channel_manager.get_channel(channel_id)
+    space = space_manager.get_space(space_id)
 
     try:
-        messages = channel.get_messages(topic_id, credentials.credentials, from_ts, to_ts, limit + 1)
+        messages = space.get_messages(topic_id, credentials.credentials, from_ts, to_ts, limit + 1)
 
         has_more = len(messages) > limit
         if has_more:
@@ -368,19 +368,19 @@ async def get_messages(
             raise HTTPException(status_code=401, detail=error_msg)
 
 
-@app.post("/channels/{channel_id}/topics/{topic_id}/messages", status_code=201)
+@app.post("/spaces/{space_id}/topics/{topic_id}/messages", status_code=201)
 async def post_message(
-    channel_id: str,
+    space_id: str,
     topic_id: str,
     message: MessagePost,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Post a new message to a topic"""
     validate_topic_id(topic_id)
-    channel = channel_manager.get_channel(channel_id)
+    space = space_manager.get_space(space_id)
 
     try:
-        server_timestamp = await channel.post_message(
+        server_timestamp = await space.post_message(
             topic_id=topic_id,
             message_hash=message.message_hash,
             prev_hash=message.prev_hash,
@@ -388,7 +388,7 @@ async def post_message(
             signature=message.signature,
             token=credentials.credentials
         )
-        logger.debug(f"Message posted: channel={channel_id}, topic={topic_id}, hash={message.message_hash[:16]}...")
+        logger.debug(f"Message posted: space={space_id}, topic={topic_id}, hash={message.message_hash[:16]}...")
 
         return {
             "message_hash": message.message_hash,
@@ -396,7 +396,7 @@ async def post_message(
         }
     except ValueError as e:
         error_msg = str(e)
-        logger.warning(f"Message post failed: channel={channel_id}, topic={topic_id}, error={error_msg}")
+        logger.warning(f"Message post failed: space={space_id}, topic={topic_id}, error={error_msg}")
         if "permission" in error_msg.lower():
             raise HTTPException(status_code=403, detail=error_msg)
         elif "conflict" in error_msg.lower():
@@ -407,18 +407,18 @@ async def post_message(
             raise HTTPException(status_code=401, detail=error_msg)
 
 
-@app.get("/channels/{channel_id}/topics/{topic_id}/messages/{message_hash}", response_model=Message)
+@app.get("/spaces/{space_id}/topics/{topic_id}/messages/{message_hash}", response_model=Message)
 async def get_message_by_hash(
-    channel_id: str,
+    space_id: str,
     topic_id: str,
     message_hash: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Get a specific message by its hash from a topic"""
-    channel = channel_manager.get_channel(channel_id)
+    space = space_manager.get_space(space_id)
 
     try:
-        message = channel.get_message_by_hash(topic_id, message_hash, credentials.credentials)
+        message = space.get_message_by_hash(topic_id, message_hash, credentials.credentials)
         return Message(**message)
     except ValueError as e:
         error_msg = str(e)
@@ -434,17 +434,17 @@ async def get_message_by_hash(
 # Blob Endpoints
 # ============================================================================
 
-@app.put("/channels/{channel_id}/blobs/{blob_id}", status_code=201, response_model=BlobUploadResponse)
+@app.put("/spaces/{space_id}/blobs/{blob_id}", status_code=201, response_model=BlobUploadResponse)
 async def upload_blob(
-    channel_id: str,
+    space_id: str,
     blob_id: str,
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Upload an encrypted blob with explicit blob_id"""
-    # Get channel and extract user from token
-    channel = channel_manager.get_channel(channel_id)
-    payload = channel.verify_jwt(credentials.credentials)
+    # Get space and extract user from token
+    space = space_manager.get_space(space_id)
+    payload = space.verify_jwt(credentials.credentials)
     user_id = payload.get("sub")
 
     if not user_id:
@@ -458,7 +458,7 @@ async def upload_blob(
     if upload_url:
         # Authorize before returning pre-signed URL
         try:
-            channel.authorize_blob_upload(user_id, credentials.credentials)
+            space.authorize_blob_upload(user_id, credentials.credentials)
         except ValueError as e:
             raise HTTPException(status_code=403, detail=str(e))
 
@@ -491,9 +491,9 @@ async def upload_blob(
                 detail=f"Blob too large. Maximum size is {max_blob_size} bytes ({max_blob_size // (1024*1024)} MB)"
             )
 
-    # Use Channel method for upload (handles authorization, validation, and storage)
+    # Use Space method for upload (handles authorization, validation, and storage)
     try:
-        result = channel.upload_blob(user_id, credentials.credentials, blob_id, bytes(blob_data))
+        result = space.upload_blob(user_id, credentials.credentials, blob_id, bytes(blob_data))
         return BlobUploadResponse(**result)
     except FileExistsError:
         raise HTTPException(status_code=409, detail="Blob already exists")
@@ -501,16 +501,16 @@ async def upload_blob(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/channels/{channel_id}/blobs/{blob_id}")
+@app.get("/spaces/{space_id}/blobs/{blob_id}")
 async def download_blob(
-    channel_id: str,
+    space_id: str,
     blob_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Download a blob by its ID"""
-    # Get channel and extract user from token
-    channel = channel_manager.get_channel(channel_id)
-    payload = channel.verify_jwt(credentials.credentials)
+    # Get space and extract user from token
+    space = space_manager.get_space(space_id)
+    payload = space.verify_jwt(credentials.credentials)
     user_id = payload.get("sub")
 
     if not user_id:
@@ -518,7 +518,7 @@ async def download_blob(
 
     # Check if blob store supports pre-signed URLs (authorization happens inside method)
     try:
-        download_url = channel.get_blob_download_url(user_id, credentials.credentials, blob_id)
+        download_url = space.get_blob_download_url(user_id, credentials.credentials, blob_id)
         if download_url:
             # Redirect client to download directly from S3
             return RedirectResponse(
@@ -528,9 +528,9 @@ async def download_blob(
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
-    # Direct download from server - use Channel method (authorization happens inside)
+    # Direct download from server - use Space method (authorization happens inside)
     try:
-        blob_data = channel.download_blob(user_id, credentials.credentials, blob_id)
+        blob_data = space.download_blob(user_id, credentials.credentials, blob_id)
         if not blob_data:
             raise HTTPException(status_code=404, detail="Blob not found")
         return Response(content=blob_data, media_type="application/octet-stream")
@@ -538,24 +538,24 @@ async def download_blob(
         raise HTTPException(status_code=403, detail=str(e))
 
 
-@app.delete("/channels/{channel_id}/blobs/{blob_id}", status_code=204)
+@app.delete("/spaces/{space_id}/blobs/{blob_id}", status_code=204)
 async def delete_blob(
-    channel_id: str,
+    space_id: str,
     blob_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Delete a blob (only by uploader or channel admin)"""
-    # Get channel and extract user from token
-    channel = channel_manager.get_channel(channel_id)
-    payload = channel.verify_jwt(credentials.credentials)
+    """Delete a blob (only by uploader or space admin)"""
+    # Get space and extract user from token
+    space = space_manager.get_space(space_id)
+    payload = space.verify_jwt(credentials.credentials)
     user_id = payload.get("sub")
 
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
 
-    # Use Channel method for deletion (handles authorization and reference removal)
+    # Use Space method for deletion (handles authorization and reference removal)
     try:
-        channel.delete_blob(user_id, credentials.credentials, blob_id)
+        space.delete_blob(user_id, credentials.credentials, blob_id)
         return Response(status_code=204)
     except ValueError as e:
         # Blob not found or authorization failed
@@ -568,42 +568,42 @@ async def delete_blob(
 # WebSocket Endpoint
 # ============================================================================
 
-async def authenticate_websocket(channel_id: str, token: Optional[str]) -> dict:
+async def authenticate_websocket(space_id: str, token: Optional[str]) -> dict:
     """Authenticate WebSocket connection using JWT token"""
     if not token:
         raise WebSocketDisconnect(code=1008, reason="Authentication required")
 
-    channel = channel_manager.get_channel(channel_id)
+    space = space_manager.get_space(space_id)
 
     try:
-        payload = channel.verify_jwt(token)
+        payload = space.verify_jwt(token)
         return payload
     except ValueError as e:
         raise WebSocketDisconnect(code=1008, reason=str(e))
 
 
-@app.websocket("/channels/{channel_id}/stream")
+@app.websocket("/spaces/{space_id}/stream")
 async def websocket_stream(
     websocket: WebSocket,
-    channel_id: str,
+    space_id: str,
     token: Optional[str] = Query(None)
 ):
     """
-    WebSocket endpoint for streaming real-time messages from a channel.
+    WebSocket endpoint for streaming real-time messages from a space.
 
     Authentication: Provide JWT token via query parameter ?token=<jwt>
     """
     # Authenticate the connection
     try:
-        current_user = await authenticate_websocket(channel_id, token)
+        current_user = await authenticate_websocket(space_id, token)
     except WebSocketDisconnect as e:
         await websocket.close(code=e.code, reason=e.reason)
         return
 
-    channel = channel_manager.get_channel(channel_id)
+    space = space_manager.get_space(space_id)
 
     # Handle the WebSocket connection (accept, keep-alive, broadcast, cleanup)
-    await channel.handle_websocket(websocket)
+    await space.handle_websocket(websocket)
 
 
 # ============================================================================

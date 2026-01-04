@@ -5,16 +5,16 @@ info:
     End-to-end encrypted messaging system with capability-based authorization.
     
     ## Architecture
-    - **Channels**: Access control boundary (one shared symmetric key)
-    - **Topics**: Message streams within a channel (independent blockchain-like chains)
-    - **State**: Per-channel key-value store (base64-encoded data, context-dependent interpretation)
+    - **Spaces**: Access control boundary (one shared symmetric key)
+    - **Topics**: Message streams within a space (independent blockchain-like chains)
+    - **State**: Per-space key-value store (base64-encoded data, context-dependent interpretation)
     - **Capabilities**: Granular, signed permissions using public key cryptography
     
     ## Security Model
     - Zero-knowledge server (can't decrypt message content)
     - Capability-based authorization with signature verification
     - Message integrity via hash chains
-    - Channel creator (channel public key) has implicit admin rights
+    - Space creator (space public key) has implicit admin rights
   version: 1.0.0
   contact:
     name: API Support
@@ -29,7 +29,7 @@ tags:
   - name: Authentication
     description: Challenge-response authentication using Ed25519 signatures
   - name: State
-    description: Channel state storage (members, capabilities, metadata) - all data stored as base64
+    description: Space state storage (members, capabilities, metadata) - all data stored as base64
   - name: Messages
     description: Blockchain-style message streams
   - name: Blobs
@@ -38,13 +38,13 @@ tags:
     description: Real-time message streaming
 
 paths:
-  /channels/{channel_id}/auth/challenge:
+  /spaces/{space_id}/auth/challenge:
     post:
       tags: [Authentication]
       summary: Request authentication challenge
       description: Get a random nonce to sign for authentication
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
       requestBody:
         required: true
         content:
@@ -78,13 +78,13 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
-  /channels/{channel_id}/auth/verify:
+  /spaces/{space_id}/auth/verify:
     post:
       tags: [Authentication]
       summary: Verify signed challenge and get JWT
       description: Submit signed challenge to authenticate and receive JWT token
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
       requestBody:
         required: true
         content:
@@ -125,13 +125,13 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /channels/{channel_id}/auth/refresh:
+  /spaces/{space_id}/auth/refresh:
     post:
       tags: [Authentication]
       summary: Refresh JWT token
       description: Get a new JWT token before the current one expires
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
       security:
         - BearerAuth: []
       responses:
@@ -151,13 +151,13 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /channels/{channel_id}/state/{path}:
+  /spaces/{space_id}/state/{path}:
     get:
       tags: [State]
       summary: Get state value
       description: Retrieve state data as base64-encoded string
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - name: path
           in: path
           required: true
@@ -191,7 +191,7 @@ paths:
         Create or update state data with cryptographic signature verification.
         All state entries must be signed - the server verifies the signature before storing.
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - name: path
           in: path
           required: true
@@ -214,7 +214,7 @@ paths:
                 signature:
                   type: string
                   format: base64
-                  description: Ed25519 signature over (channel_id|path|data|signed_at) by signer (REQUIRED for all state writes)
+                  description: Ed25519 signature over (space_id|path|data|signed_at) by signer (REQUIRED for all state writes)
                 signed_by:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{44}$'
@@ -257,7 +257,7 @@ paths:
         Remove state data with cryptographic signature verification.
         Deletion requests must be signed - the server verifies the signature before deleting.
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - name: path
           in: path
           required: true
@@ -303,13 +303,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /channels/{channel_id}/topics/{topic_id}/messages:
+  /spaces/{space_id}/topics/{topic_id}/messages:
     get:
       tags: [Messages]
       summary: Query messages in a topic
       description: Retrieve messages with optional time-based filtering
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - $ref: '#/components/parameters/TopicId'
         - name: from
           in: query
@@ -361,7 +361,7 @@ paths:
         - prev_hash matches the current chain head
         - Message hash is correctly computed
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - $ref: '#/components/parameters/TopicId'
       security:
         - BearerAuth: []
@@ -429,13 +429,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /channels/{channel_id}/topics/{topic_id}/messages/{message_hash}:
+  /spaces/{space_id}/topics/{topic_id}/messages/{message_hash}:
     get:
       tags: [Messages]
       summary: Get specific message by hash from a topic
       description: Retrieve a single message from a specific topic using its content hash
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - $ref: '#/components/parameters/TopicId'
         - name: message_hash
           in: path
@@ -462,12 +462,12 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-  /channels/{channel_id}/stream:
+  /spaces/{space_id}/stream:
     get:
       tags: [WebSocket]
-      summary: WebSocket stream for real-time channel messages
+      summary: WebSocket stream for real-time space messages
       description: |
-        Establishes a WebSocket connection to receive real-time messages from all topics in the channel.
+        Establishes a WebSocket connection to receive real-time messages from all topics in the space.
 
         **Protocol**: WebSocket (ws:// or wss://)
 
@@ -477,7 +477,7 @@ paths:
 
         **Connection**: Upgrade from HTTP to WebSocket using standard WebSocket handshake.
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - name: token
           in: query
           required: false
@@ -495,16 +495,16 @@ paths:
         messageSchema:
           $ref: '#/components/schemas/Message'
 
-  /channels/{channel_id}/blobs/{blob_id}:
+  /spaces/{space_id}/blobs/{blob_id}:
     put:
       tags: [Blobs]
       summary: Upload encrypted blob
       description: |
         Upload encrypted binary data (attachments, images, etc.) with explicit blob_id.
         The blob_id must match the SHA256 hash of the content.
-        Blobs are scoped to the channel - only channel members can access them.
+        Blobs are scoped to the space - only space members can access them.
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - name: blob_id
           in: path
           required: true
@@ -575,9 +575,9 @@ paths:
       summary: Download blob
       description: |
         Retrieve encrypted blob by its content hash.
-        Only accessible to members of the same channel where the blob was uploaded.
+        Only accessible to members of the same space where the blob was uploaded.
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - name: blob_id
           in: path
           required: true
@@ -606,7 +606,7 @@ paths:
                 format: uri
               description: Pre-signed S3 URL for downloading the blob directly from object storage
         '403':
-          description: Blob belongs to a different channel
+          description: Blob belongs to a different space
           content:
             application/json:
               schema:
@@ -621,9 +621,9 @@ paths:
       summary: Delete blob
       description: |
         Remove blob from storage.
-        Only the uploader or channel admin can delete a blob.
+        Only the uploader or space admin can delete a blob.
       parameters:
-        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SpaceId'
         - name: blob_id
           in: path
           required: true
@@ -638,7 +638,7 @@ paths:
         '204':
           description: Blob deleted successfully
         '403':
-          description: Not authorized to delete this blob (must be uploader or channel admin)
+          description: Not authorized to delete this blob (must be uploader or space admin)
           content:
             application/json:
               schema:
@@ -657,8 +657,8 @@ components:
       description: JWT token obtained from /auth/verify
 
   parameters:
-    ChannelId:
-      name: channel_id
+    SpaceId:
+      name: space_id
       in: path
       required: true
       schema:
@@ -666,7 +666,7 @@ components:
         pattern: '^[A-Za-z0-9_-]{44}$'
         minLength: 44
         maxLength: 44
-      description: Typed channel identifier (44-char URL-safe base64, Ed25519 public key with header byte)
+      description: Typed space identifier (44-char URL-safe base64, Ed25519 public key with header byte)
 
     TopicId:
       name: topic_id
@@ -830,7 +830,7 @@ components:
       type: object
       required: [path, data, signature, signed_by, signed_at]
       description: |
-        State entry stored in the channel's state tree.
+        State entry stored in the space's state tree.
         Every state entry must be cryptographically signed.
       properties:
         path:
@@ -847,7 +847,7 @@ components:
         signature:
           type: string
           format: base64
-          description: Ed25519 signature over the state entry (channel_id|path|data|signed_at) by signer
+          description: Ed25519 signature over the state entry (space_id|path|data|signed_at) by signer
         signed_by:
           type: string
           pattern: '^[A-Za-z0-9_-]{44}$'

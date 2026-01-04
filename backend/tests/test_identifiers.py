@@ -9,7 +9,7 @@ import secrets
 
 from identifiers import (
     TypedIdentifier, IdType,
-    encode_channel_id, encode_user_id, encode_message_id, encode_blob_id,
+    encode_space_id, encode_user_id, encode_message_id, encode_blob_id,
     extract_public_key, extract_hash, decode_identifier
 )
 
@@ -20,12 +20,12 @@ def test_basic_encoding_decoding():
     test_key = secrets.token_bytes(32)
     test_hash = secrets.token_bytes(32)
 
-    # Test channel ID
-    channel_id = encode_channel_id(test_key)
-    assert len(channel_id) == 44, "Channel ID should be 44 characters"
+    # Test space ID
+    space_id = encode_space_id(test_key)
+    assert len(space_id) == 44, "Space ID should be 44 characters"
 
-    decoded = decode_identifier(channel_id)
-    assert decoded.id_type == IdType.CHANNEL
+    decoded = decode_identifier(space_id)
+    assert decoded.id_type == IdType.SPACE
     assert decoded.data == test_key
     assert decoded.version == 0
 
@@ -54,8 +54,8 @@ def test_extract_functions():
     test_hash = secrets.token_bytes(32)
 
     # Test extracting public key
-    channel_id = encode_channel_id(test_key)
-    extracted_key = extract_public_key(channel_id)
+    space_id = encode_space_id(test_key)
+    extracted_key = extract_public_key(space_id)
     assert extracted_key == test_key
 
     # Test extracting hash
@@ -69,11 +69,11 @@ def test_type_validation():
     test_key = secrets.token_bytes(32)
     test_hash = secrets.token_bytes(32)
 
-    channel_id = encode_channel_id(test_key)
+    space_id = encode_space_id(test_key)
     message_id = encode_message_id(test_hash)
 
     # Should work
-    extract_public_key(channel_id)
+    extract_public_key(space_id)
 
     # Should fail - message ID is not a public key type
     with pytest.raises(ValueError):
@@ -82,9 +82,9 @@ def test_type_validation():
     # Should work
     extract_hash(message_id)
 
-    # Should fail - channel ID is not a hash type
+    # Should fail - space ID is not a hash type
     with pytest.raises(ValueError):
-        extract_hash(channel_id)
+        extract_hash(space_id)
 
 
 def test_crypto_integration(crypto):
@@ -99,13 +99,13 @@ def test_crypto_integration(crypto):
     assert decoded.id_type == IdType.BLOB
 
     # Test message hash computation
-    channel_id = encode_channel_id(secrets.token_bytes(32))
+    space_id = encode_space_id(secrets.token_bytes(32))
     sender_id = encode_user_id(secrets.token_bytes(32))
     topic = "test-topic"
     payload = crypto.base64_encode(b"encrypted payload")
 
     message_hash = crypto.compute_message_hash(
-        channel_id,
+        space_id,
         topic,
         None,  # First message
         payload,
@@ -121,10 +121,10 @@ def test_no_padding():
     """Verify that base64 encoding produces no padding"""
     # 33 bytes should encode to exactly 44 chars with no '=' padding
     test_data = secrets.token_bytes(32)
-    channel_id = encode_channel_id(test_data)
+    space_id = encode_space_id(test_data)
 
-    assert '=' not in channel_id, "Base64 should have no padding"
-    assert len(channel_id) == 44
+    assert '=' not in space_id, "Base64 should have no padding"
+    assert len(space_id) == 44
 
 
 def test_url_safe():
@@ -132,12 +132,12 @@ def test_url_safe():
     # Generate many identifiers to increase chance of getting + or / if not URL-safe
     for _ in range(100):
         test_data = secrets.token_bytes(32)
-        channel_id = encode_channel_id(test_data)
+        space_id = encode_space_id(test_data)
         user_id = encode_user_id(test_data)
         message_id = encode_message_id(test_data)
         blob_id = encode_blob_id(test_data)
 
-        for identifier in [channel_id, user_id, message_id, blob_id]:
+        for identifier in [space_id, user_id, message_id, blob_id]:
             assert '+' not in identifier, f"Found non-URL-safe '+' in {identifier}"
             assert '/' not in identifier, f"Found non-URL-safe '/' in {identifier}"
             # Should only contain A-Z, a-z, 0-9, -, _
@@ -148,11 +148,11 @@ def test_different_types_different_ids():
     """Verify that the same data produces different IDs for different types"""
     test_data = secrets.token_bytes(32)
 
-    channel_id = encode_channel_id(test_data)
+    space_id = encode_space_id(test_data)
     user_id = encode_user_id(test_data)
     message_id = encode_message_id(test_data)
     blob_id = encode_blob_id(test_data)
 
     # All should be different despite same underlying data
-    ids = {channel_id, user_id, message_id, blob_id}
+    ids = {space_id, user_id, message_id, blob_id}
     assert len(ids) == 4, "All typed IDs should be different"

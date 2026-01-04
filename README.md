@@ -8,17 +8,17 @@ rEEEductio is not intended to be a replacement for an app like Signal.  Instead,
 
 ### Core Concepts
 
-**Channels**: The primary access control boundary. Each channel has:
-- A unique Ed25519 public key as its identifier (the channel creator holds the private key)
+**Spaces**: The primary access control boundary. Each space has:
+- A unique Ed25519 public key as its identifier (the space creator holds the private key)
 - A shared symmetric key for encrypting message content
 - Independent state storage for members, capabilities, and metadata
 
-**Topics**: Message streams within a channel. Each topic maintains:
+**Topics**: Message streams within a space. Each topic maintains:
 - A blockchain-style hash chain of messages (each message links to the previous via `prev_hash`)
 - Independent message sequences
 - Linear ordering verified by the server
 
-**State**: A flexible key-value store within each channel that can hold:
+**State**: A flexible key-value store within each space that can hold:
 - **Plaintext state**: User identities, roles, capabilities, tools, topic metadata (server can read for authorization)
 - **Encrypted state**: User preferences, private data (server stores as opaque blobs)
 - **All state entries must be signed**: Each entry includes signature, signed_by (user ID), and signed_at (timestamp)
@@ -48,7 +48,7 @@ rEEEductio is not intended to be a replacement for an app like Signal.  Instead,
 ### Security Model
 
 1. **Zero-knowledge server**: The server never sees plaintext message content
-2. **End-to-end encryption**: Messages are encrypted with the channel's symmetric key
+2. **End-to-end encryption**: Messages are encrypted with the space's symmetric key
 3. **Capability-based authorization**: All operations require explicit capabilities (users, roles, and tools)
 4. **Message integrity**: Hash chains ensure messages cannot be tampered with
 5. **Signed state**: All state entries are cryptographically signed, preventing tampering and providing audit trail
@@ -60,9 +60,9 @@ rEEEductio is not intended to be a replacement for an app like Signal.  Instead,
 ### Authentication
 
 ```
-POST /channels/{channel_id}/auth/challenge
-POST /channels/{channel_id}/auth/verify
-POST /channels/{channel_id}/auth/refresh
+POST /spaces/{space_id}/auth/challenge
+POST /spaces/{space_id}/auth/verify
+POST /spaces/{space_id}/auth/refresh
 ```
 
 Authentication uses challenge-response with Ed25519 signatures:
@@ -73,12 +73,12 @@ Authentication uses challenge-response with Ed25519 signatures:
 ### State Management
 
 ```
-GET    /channels/{channel_id}/state/{path}
-PUT    /channels/{channel_id}/state/{path}
-DELETE /channels/{channel_id}/state/{path}
+GET    /spaces/{space_id}/state/{path}
+PUT    /spaces/{space_id}/state/{path}
+DELETE /spaces/{space_id}/state/{path}
 ```
 
-All channel data is stored as signed state entries:
+All space data is stored as signed state entries:
 - `/state/auth/users/{user_id}` - User identity
 - `/state/auth/users/{user_id}/rights/{capability_id}` - User capabilities
 - `/state/auth/users/{user_id}/roles/{role_id}` - Role grants to users
@@ -91,16 +91,16 @@ All channel data is stored as signed state entries:
 
 Each state entry includes:
 - `data` - Base64-encoded content
-- `signature` - Ed25519 signature over `channel_id|path|data|signed_at`
+- `signature` - Ed25519 signature over `space_id|path|data|signed_at`
 - `signed_by` - User ID who created the entry
 - `signed_at` - Unix timestamp in milliseconds
 
 ### Messages
 
 ```
-GET  /channels/{channel_id}/topics/{topic_id}/messages?from=&to=&limit=
-POST /channels/{channel_id}/topics/{topic_id}/messages
-GET  /channels/{channel_id}/messages/{message_hash}
+GET  /spaces/{space_id}/topics/{topic_id}/messages?from=&to=&limit=
+POST /spaces/{space_id}/topics/{topic_id}/messages
+GET  /spaces/{space_id}/messages/{message_hash}
 ```
 
 Messages form a blockchain-style chain:
@@ -175,21 +175,21 @@ The server verifies:
 
 ## Bootstrap Process
 
-### Creating a Channel
+### Creating a Space
 
-1. Generate channel Ed25519 keypair (channel public key = channel_id)
-2. Channel creator has full admin authority (no need to explicitly add to state)
+1. Generate space Ed25519 keypair (space public key = space_id)
+2. Space creator has full admin authority (no need to explicitly add to state)
 3. Creator can define roles for common permission sets:
    ```
    PUT /state/auth/roles/user
    PUT /state/auth/roles/user/rights/{capability_id}
    ```
 4. Create join tool with limited capabilities (e.g., can only create new users and grant "user" role)
-5. Package QR code with: `channel_id`, `symmetric_key`, `join_tool_private_key`
+5. Package QR code with: `space_id`, `symmetric_key`, `join_tool_private_key`
 
-### Joining a Channel
+### Joining a Space
 
-1. Scan QR code to get channel credentials
+1. Scan QR code to get space credentials
 2. Generate personal Ed25519 keypair
 3. Use join tool to add yourself as a user:
    ```
@@ -237,26 +237,26 @@ SQLite database with four main tables:
 ### `state`
 ```sql
 CREATE TABLE state (
-    channel_id TEXT NOT NULL,
+    space_id TEXT NOT NULL,
     path TEXT NOT NULL,
     data TEXT NOT NULL,
     signature TEXT NOT NULL,
     signed_by TEXT NOT NULL,
     signed_at INTEGER NOT NULL,
-    PRIMARY KEY (channel_id, path)
+    PRIMARY KEY (space_id, path)
 )
 ```
 
-All state entries are cryptographically signed. The signature is computed over `channel_id|path|data|signed_at`.
+All state entries are cryptographically signed. The signature is computed over `space_id|path|data|signed_at`.
 
 ### `tool_usage`
 ```sql
 CREATE TABLE tool_usage (
-    channel_id TEXT NOT NULL,
+    space_id TEXT NOT NULL,
     tool_id TEXT NOT NULL,
     use_count INTEGER NOT NULL DEFAULT 0,
     last_used_at INTEGER,
-    PRIMARY KEY (channel_id, tool_id)
+    PRIMARY KEY (space_id, tool_id)
 )
 ```
 
@@ -265,7 +265,7 @@ Tracks usage counts for tools with `use_limit` restrictions.
 ### `messages`
 ```sql
 CREATE TABLE messages (
-    channel_id TEXT NOT NULL,
+    space_id TEXT NOT NULL,
     topic_id TEXT NOT NULL,
     message_hash TEXT NOT NULL PRIMARY KEY,
     prev_hash TEXT,
@@ -273,7 +273,7 @@ CREATE TABLE messages (
     encrypted_payload TEXT NOT NULL,
     client_timestamp INTEGER,
     server_timestamp INTEGER NOT NULL,
-    UNIQUE(channel_id, topic_id, sequence)
+    UNIQUE(space_id, topic_id, sequence)
 )
 ```
 
@@ -292,7 +292,7 @@ CREATE TABLE blobs (
 ### What the Server Knows
 
 The server can see:
-- Channel IDs (public keys)
+- Space IDs (public keys)
 - User and tool public keys (from typed identifiers)
 - Roles, capabilities, and permissions (stored as plaintext state)
 - State entry signatures and who signed them
@@ -302,9 +302,9 @@ The server can see:
 
 ### What the Server Cannot See
 
-- Message content (encrypted with channel symmetric key)
+- Message content (encrypted with space symmetric key)
 - User preferences and private state (encrypted client-side)
-- Channel symmetric keys
+- Space symmetric keys
 - User or tool private keys
 
 ### Threat Model
@@ -319,10 +319,10 @@ Protected against:
 
 Not protected against:
 - **Network analysis**: Server sees communication patterns and timing
-- **Compromised channel key**: Anyone with the QR code can decrypt messages
+- **Compromised space key**: Anyone with the QR code can decrypt messages
 - **Compromised user key**: Can impersonate that user
 - **Compromised tool key**: Can use tool's capabilities (up to use_limit)
-- **Malicious channel creator**: Creator has full admin authority
+- **Malicious space creator**: Creator has full admin authority
 
 ## Example Usage
 
@@ -345,7 +345,7 @@ public_key_b64 = base64.b64encode(public_key_bytes).decode('utf-8')
 
 # Request challenge
 response = requests.post(
-    f"http://localhost:8000/channels/{channel_id}/auth/challenge",
+    f"http://localhost:8000/spaces/{space_id}/auth/challenge",
     json={"public_key": public_key_b64}
 )
 challenge = response.json()["challenge"]
@@ -357,7 +357,7 @@ signature_b64 = base64.b64encode(signature).decode('utf-8')
 
 # Verify and get token
 response = requests.post(
-    f"http://localhost:8000/channels/{channel_id}/auth/verify",
+    f"http://localhost:8000/spaces/{space_id}/auth/verify",
     json={
         "public_key": public_key_b64,
         "signature": signature_b64,
@@ -369,7 +369,7 @@ token = response.json()["token"]
 # Use token for authenticated requests
 headers = {"Authorization": f"Bearer {token}"}
 response = requests.get(
-    f"http://localhost:8000/channels/{channel_id}/topics/general/messages",
+    f"http://localhost:8000/spaces/{space_id}/topics/general/messages",
     headers=headers
 )
 messages = response.json()
@@ -404,19 +404,19 @@ Hash chains provide:
 - **Verification**: Clients can verify history independently
 - **Simplicity**: No complex consensus, just append-only logs
 
-### Why Separate Channels from Topics?
+### Why Separate Spaces from Topics?
 
-- **Channels** = Trust boundary (who has the symmetric key)
+- **Spaces** = Trust boundary (who has the symmetric key)
 - **Topics** = Organizational convenience (separate conversation threads)
-- Single key for entire channel simplifies key distribution
+- Single key for entire space simplifies key distribution
 - All members can read all history (good for transparency)
-- Removal requires new channel (clean security model)
+- Removal requires new space (clean security model)
 
 ## Future Enhancements
 
 - WebSocket implementation for real-time message streaming
 - Message deletion/editing (with cryptographic proofs)
-- Channel key rotation (re-encryption of history)
+- Space key rotation (re-encryption of history)
 - Hierarchical capabilities (delegate with automatic revocation)
 - Multi-device support (device keys derived from master key)
 - Forward secrecy (per-message keys derived from ratchet)

@@ -66,7 +66,7 @@ class SqlMessageStore(MessageStore):
             # Messages table - blockchain-style message chains
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
-                    channel_id TEXT NOT NULL,
+                    space_id TEXT NOT NULL,
                     topic_id TEXT NOT NULL,
                     message_hash TEXT NOT NULL PRIMARY KEY,
                     prev_hash TEXT,
@@ -80,19 +80,19 @@ class SqlMessageStore(MessageStore):
             # Create indexes for message queries
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_messages_topic
-                ON messages(channel_id, topic_id, server_timestamp)
+                ON messages(space_id, topic_id, server_timestamp)
             """)
 
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_messages_timestamp
-                ON messages(channel_id, topic_id, server_timestamp DESC)
+                ON messages(space_id, topic_id, server_timestamp DESC)
             """)
 
             conn.commit()
 
     def add_message(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         message_hash: str,
         prev_hash: Optional[str],
@@ -112,23 +112,23 @@ class SqlMessageStore(MessageStore):
 
             cursor.execute(f"""
                 INSERT INTO messages
-                (channel_id, topic_id, message_hash, prev_hash,
+                (space_id, topic_id, message_hash, prev_hash,
                  encrypted_payload, sender, signature, server_timestamp)
                 VALUES ({placeholders})
             """, (
-                channel_id, topic_id, message_hash, prev_hash,
+                space_id, topic_id, message_hash, prev_hash,
                 encrypted_payload, sender, signature, server_timestamp
             ))
 
         # Invalidate cache if present
         if self._cache is not None:
             # Invalidate chain head for this topic
-            chain_head_key = f"chain_head:{channel_id}:{topic_id}"
+            chain_head_key = f"chain_head:{space_id}:{topic_id}"
             self._cache.pop(chain_head_key, None)
 
     def get_messages(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         from_ts: Optional[int] = None,
         to_ts: Optional[int] = None,
@@ -144,9 +144,9 @@ class SqlMessageStore(MessageStore):
                 SELECT message_hash, topic_id, prev_hash,
                        encrypted_payload, sender, signature, server_timestamp
                 FROM messages
-                WHERE channel_id = {0} AND topic_id = {1}
+                WHERE space_id = {0} AND topic_id = {1}
             """
-            params: List[Any] = [channel_id, topic_id]
+            params: List[Any] = [space_id, topic_id]
             param_idx = 2
 
             if from_ts is not None:
@@ -185,14 +185,14 @@ class SqlMessageStore(MessageStore):
 
     def get_message_by_hash(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         message_hash: str
     ) -> Optional[Dict[str, Any]]:
         """Get a specific message by its hash"""
         # Check cache if present
         if self._cache is not None:
-            cache_key = f"message:{channel_id}:{topic_id}:{message_hash}"
+            cache_key = f"message:{space_id}:{topic_id}:{message_hash}"
             cached = self._cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -205,8 +205,8 @@ class SqlMessageStore(MessageStore):
                 SELECT message_hash, topic_id, prev_hash,
                        encrypted_payload, sender, signature, server_timestamp
                 FROM messages
-                WHERE channel_id = {ph(0)} AND topic_id = {ph(1)} AND message_hash = {ph(2)}
-            """, (channel_id, topic_id, message_hash))
+                WHERE space_id = {ph(0)} AND topic_id = {ph(1)} AND message_hash = {ph(2)}
+            """, (space_id, topic_id, message_hash))
 
             row = cursor.fetchone()
             if not row:
@@ -224,20 +224,20 @@ class SqlMessageStore(MessageStore):
 
             # Store in cache if present
             if self._cache is not None:
-                cache_key = f"message:{channel_id}:{topic_id}:{message_hash}"
+                cache_key = f"message:{space_id}:{topic_id}:{message_hash}"
                 self._cache.set(cache_key, result)
 
             return result
 
     def get_chain_head(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str
     ) -> Optional[Dict[str, Any]]:
         """Get the most recent message in a topic (chain head)"""
         # Check cache if present
         if self._cache is not None:
-            cache_key = f"chain_head:{channel_id}:{topic_id}"
+            cache_key = f"chain_head:{space_id}:{topic_id}"
             cached = self._cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -249,10 +249,10 @@ class SqlMessageStore(MessageStore):
             cursor.execute(f"""
                 SELECT message_hash
                 FROM messages
-                WHERE channel_id = {ph(0)} AND topic_id = {ph(1)}
+                WHERE space_id = {ph(0)} AND topic_id = {ph(1)}
                 ORDER BY server_timestamp DESC
                 LIMIT 1
-            """, (channel_id, topic_id))
+            """, (space_id, topic_id))
 
             row = cursor.fetchone()
             if not row:
@@ -264,7 +264,7 @@ class SqlMessageStore(MessageStore):
 
             # Store in cache if present
             if self._cache is not None:
-                cache_key = f"chain_head:{channel_id}:{topic_id}"
+                cache_key = f"chain_head:{space_id}:{topic_id}"
                 self._cache.set(cache_key, result)
 
             return result

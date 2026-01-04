@@ -7,8 +7,8 @@ This document explains the changes made to support Google Cloud Firestore as a b
 ### 1. API Changes ✅
 
 **Updated endpoint to include `topic_id` in URL:**
-- **Old:** `GET /channels/{channel_id}/messages/{message_hash}`
-- **New:** `GET /channels/{channel_id}/topics/{topic_id}/messages/{message_hash}`
+- **Old:** `GET /spaces/{space_id}/messages/{message_hash}`
+- **New:** `GET /spaces/{space_id}/topics/{topic_id}/messages/{message_hash}`
 
 **Why:** This change eliminates the need for expensive collection group queries in Firestore. With `topic_id` in the URL, message lookups become direct document reads (very fast!).
 
@@ -19,32 +19,32 @@ This document explains the changes made to support Google Cloud Firestore as a b
 #### MessageStore Interface ([message_store.py](backend/message_store.py))
 Updated `get_message_by_hash()` to require `topic_id`:
 ```python
-def get_message_by_hash(self, channel_id: str, topic_id: str, message_hash: str)
+def get_message_by_hash(self, space_id: str, topic_id: str, message_hash: str)
 ```
 
-#### Channel Class ([channel.py](backend/channel.py))
+#### Space Class ([space.py](backend/space.py))
 - Now requires `StateStore` and `MessageStore` instances (no longer optional)
 - Removed SQLite-specific initialization code
-- Stores are now created by `ChannelManager`
+- Stores are now created by `SpaceManager`
 
-#### ChannelManager ([channel_manager.py](backend/channel_manager.py))
+#### SpaceManager ([space_manager.py](backend/space_manager.py))
 - Added optional `state_store_factory` and `message_store_factory` parameters
 - Creates appropriate stores based on configuration:
-  - **SQLite mode:** Creates per-channel database files
+  - **SQLite mode:** Creates per-space database files
   - **Firestore mode:** Uses shared global Firestore instance
 
 ### 3. New Files
 
 #### [firestore_state_store.py](backend/firestore_state_store.py)
 Implements `StateStore` interface using Google Cloud Firestore:
-- Hierarchical document structure: `channels/{channel_id}/state/{encoded_path}`
+- Hierarchical document structure: `spaces/{space_id}/state/{encoded_path}`
 - Path encoding: Replaces `/` with `~` for Firestore compatibility
 - Efficient prefix queries using range filters
 - No caching (multi-instance safe)
 
 #### [firestore_message_store.py](backend/firestore_message_store.py)
 Implements `MessageStore` interface using Google Cloud Firestore:
-- Document structure: `channels/{channel_id}/topics/{topic_id}/messages/{message_hash}`
+- Document structure: `spaces/{space_id}/topics/{topic_id}/messages/{message_hash}`
 - Atomic batch writes for message + chain head updates
 - Direct document lookups (thanks to topic_id in URL!)
 - Efficient time-range queries with indexes
@@ -153,7 +153,7 @@ database:
 2. **Data migration script** (TODO):
    ```python
    # Read from SQLite, write to Firestore
-   # Preserve channel_id, paths, and message chains
+   # Preserve space_id, paths, and message chains
    ```
 
 3. **Deploy updated application**

@@ -63,56 +63,56 @@ class SqlStateStore(StateStore):
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # State table - stores all channel state (members, capabilities, metadata)
+            # State table - stores all space state (members, capabilities, metadata)
             # Data is always stored as base64 string; interpretation is context-dependent
             # Every state entry must be cryptographically signed
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS state (
-                    channel_id TEXT NOT NULL,
+                    space_id TEXT NOT NULL,
                     path TEXT NOT NULL,
                     data TEXT NOT NULL,
                     signature TEXT NOT NULL,
                     signed_by TEXT NOT NULL,
                     signed_at INTEGER NOT NULL,
-                    PRIMARY KEY (channel_id, path)
+                    PRIMARY KEY (space_id, path)
                 )
             """)
 
             # Create index for faster state queries
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_state_channel
-                ON state(channel_id)
+                CREATE INDEX IF NOT EXISTS idx_state_space
+                ON state(space_id)
             """)
 
-            # Tool usage table - tracks tool operation counts (NOT part of channel state)
+            # Tool usage table - tracks tool operation counts (NOT part of space state)
             # This is operational metadata maintained by the server
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tool_usage (
-                    channel_id TEXT NOT NULL,
+                    space_id TEXT NOT NULL,
                     tool_id TEXT NOT NULL,
                     use_count INTEGER NOT NULL DEFAULT 0,
                     last_used_at INTEGER,
-                    PRIMARY KEY (channel_id, tool_id)
+                    PRIMARY KEY (space_id, tool_id)
                 )
             """)
 
             # Create index for faster tool usage queries
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_tool_usage_channel
-                ON tool_usage(channel_id)
+                CREATE INDEX IF NOT EXISTS idx_tool_usage_space
+                ON tool_usage(space_id)
             """)
 
             conn.commit()
 
     def get_state(
         self,
-        channel_id: str,
+        space_id: str,
         path: str
     ) -> Optional[Dict[str, Any]]:
         """Get state value by path (data is always returned as base64 string)"""
         # Check cache if present
         if self._cache is not None:
-            cache_key = f"state:{channel_id}:{path}"
+            cache_key = f"state:{space_id}:{path}"
             cached = self._cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -124,8 +124,8 @@ class SqlStateStore(StateStore):
             cursor.execute(f"""
                 SELECT path, data, signature, signed_by, signed_at
                 FROM state
-                WHERE channel_id = {ph(0)} AND path = {ph(1)}
-            """, (channel_id, path))
+                WHERE space_id = {ph(0)} AND path = {ph(1)}
+            """, (space_id, path))
 
             row = cursor.fetchone()
             if not row:
@@ -141,14 +141,14 @@ class SqlStateStore(StateStore):
 
             # Store in cache if present
             if self._cache is not None:
-                cache_key = f"state:{channel_id}:{path}"
+                cache_key = f"state:{space_id}:{path}"
                 self._cache.set(cache_key, result)
 
             return result
 
     def set_state(
         self,
-        channel_id: str,
+        space_id: str,
         path: str,
         data: str,
         signature: str,
@@ -165,24 +165,24 @@ class SqlStateStore(StateStore):
             cursor.execute(f"""
                 UPDATE state
                 SET data = {ph(0)}, signature = {ph(1)}, signed_by = {ph(2)}, signed_at = {ph(3)}
-                WHERE channel_id = {ph(4)} AND path = {ph(5)}
-            """, (data, signature, signed_by, signed_at, channel_id, path))
+                WHERE space_id = {ph(4)} AND path = {ph(5)}
+            """, (data, signature, signed_by, signed_at, space_id, path))
 
             # If no rows were updated, insert a new row
             if cursor.rowcount == 0:
                 placeholders = ", ".join([ph(i) for i in range(6)])
                 cursor.execute(f"""
                     INSERT INTO state
-                    (channel_id, path, data, signature, signed_by, signed_at)
+                    (space_id, path, data, signature, signed_by, signed_at)
                     VALUES ({placeholders})
-                """, (channel_id, path, data, signature, signed_by, signed_at))
+                """, (space_id, path, data, signature, signed_by, signed_at))
 
         # Invalidate cache if present
         if self._cache is not None:
-            cache_key = f"state:{channel_id}:{path}"
+            cache_key = f"state:{space_id}:{path}"
             self._cache.pop(cache_key, None)
 
-    def delete_state(self, channel_id: str, path: str) -> bool:
+    def delete_state(self, space_id: str, path: str) -> bool:
         """Delete state value"""
         ph = self._get_placeholder
 
@@ -190,20 +190,20 @@ class SqlStateStore(StateStore):
             cursor = conn.cursor()
             cursor.execute(f"""
                 DELETE FROM state
-                WHERE channel_id = {ph(0)} AND path = {ph(1)}
-            """, (channel_id, path))
+                WHERE space_id = {ph(0)} AND path = {ph(1)}
+            """, (space_id, path))
             deleted = cursor.rowcount > 0
 
         # Invalidate cache if present
         if self._cache is not None:
-            cache_key = f"state:{channel_id}:{path}"
+            cache_key = f"state:{space_id}:{path}"
             self._cache.pop(cache_key, None)
 
         return deleted
 
     def list_state(
         self,
-        channel_id: str,
+        space_id: str,
         prefix: str
     ) -> List[Dict[str, Any]]:
         """List all state entries matching a prefix (data is always base64 string)"""
@@ -214,9 +214,9 @@ class SqlStateStore(StateStore):
             cursor.execute(f"""
                 SELECT path, data, signature, signed_by, signed_at
                 FROM state
-                WHERE channel_id = {ph(0)} AND path LIKE {ph(1)}
+                WHERE space_id = {ph(0)} AND path LIKE {ph(1)}
                 ORDER BY path
-            """, (channel_id, f"{prefix}%"))
+            """, (space_id, f"{prefix}%"))
 
             results = []
             for row in cursor.fetchall():
@@ -230,7 +230,7 @@ class SqlStateStore(StateStore):
 
             return results
 
-    def initialize_tool_usage(self, channel_id: str, tool_id: str) -> None:
+    def initialize_tool_usage(self, space_id: str, tool_id: str) -> None:
         """
         Initialize tool usage tracking for a use-limited tool.
         Creates a row with use_count=0.
@@ -242,21 +242,21 @@ class SqlStateStore(StateStore):
             placeholders = ", ".join([ph(i) for i in range(3)])
             cursor.execute(f"""
                 INSERT INTO tool_usage
-                (channel_id, tool_id, use_count)
+                (space_id, tool_id, use_count)
                 VALUES ({placeholders})
-            """, (channel_id, tool_id, 0))
+            """, (space_id, tool_id, 0))
 
-    def increment_tool_usage(self, channel_id: str, tool_id: str, timestamp: int) -> int:
+    def increment_tool_usage(self, space_id: str, tool_id: str, timestamp: int) -> int:
         """
         Increment tool use count and return new count.
 
-        This is operational metadata (NOT part of channel state).
+        This is operational metadata (NOT part of space state).
         Used to track and enforce use_limit for tools.
 
         NOTE: Assumes initialize_tool_usage has been called for this tool.
 
         Args:
-            channel_id: Channel ID
+            space_id: Space ID
             tool_id: Tool ID (T_*)
             timestamp: Current timestamp in milliseconds
 
@@ -273,31 +273,31 @@ class SqlStateStore(StateStore):
             cursor.execute(f"""
                 UPDATE tool_usage
                 SET use_count = use_count + 1, last_used_at = {ph(0)}
-                WHERE channel_id = {ph(1)} AND tool_id = {ph(2)}
-            """, (timestamp, channel_id, tool_id))
+                WHERE space_id = {ph(1)} AND tool_id = {ph(2)}
+            """, (timestamp, space_id, tool_id))
 
             if cursor.rowcount == 0:
-                raise ValueError(f"Tool usage tracking not initialized for {tool_id} in channel {channel_id}")
+                raise ValueError(f"Tool usage tracking not initialized for {tool_id} in space {space_id}")
 
             # Get the new count
             cursor.execute(f"""
                 SELECT use_count
                 FROM tool_usage
-                WHERE channel_id = {ph(0)} AND tool_id = {ph(1)}
-            """, (channel_id, tool_id))
+                WHERE space_id = {ph(0)} AND tool_id = {ph(1)}
+            """, (space_id, tool_id))
             row = cursor.fetchone()
             if not row:
                 raise ValueError(f"Failed to read tool usage after update for {tool_id}")
             return row["use_count"]
 
-    def get_tool_usage(self, channel_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
+    def get_tool_usage(self, space_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
         """
         Get tool usage statistics.
 
-        This is operational metadata (NOT part of channel state).
+        This is operational metadata (NOT part of space state).
 
         Args:
-            channel_id: Channel ID
+            space_id: Space ID
             tool_id: Tool ID (T_*)
 
         Returns:
@@ -310,8 +310,8 @@ class SqlStateStore(StateStore):
             cursor.execute(f"""
                 SELECT use_count, last_used_at
                 FROM tool_usage
-                WHERE channel_id = {ph(0)} AND tool_id = {ph(1)}
-            """, (channel_id, tool_id))
+                WHERE space_id = {ph(0)} AND tool_id = {ph(1)}
+            """, (space_id, tool_id))
 
             row = cursor.fetchone()
             if not row:

@@ -58,7 +58,7 @@ Common test fixtures are defined in `conftest.py`:
 - `authz` - AuthorizationEngine instance
 - `fs_blob_store` - Filesystem blob store instance
 - `db_blob_store` - Database blob store instance
-- `admin_keypair` - Admin keypair with channel_id
+- `admin_keypair` - Admin keypair with space_id
 - `user_keypair` - User keypair
 
 ## Test Coverage

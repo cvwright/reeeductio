@@ -1,7 +1,7 @@
 """
-Channel - Core business logic for a single channel
+Space - Core business logic for a single space
 
-This class encapsulates all channel operations including state management,
+This class encapsulates all space operations including state management,
 message handling, and WebSocket connections. It's designed to be:
 - Framework-agnostic (works with FastAPI, Durable Objects, etc.)
 - Self-contained (manages its own storage)
@@ -25,25 +25,25 @@ import secrets
 import jwt
 
 
-class Channel:
+class Space:
     """
-    Represents a single channel with its state, messages, and connections.
+    Represents a single space with its state, messages, and connections.
 
-    Each channel instance manages:
+    Each space instance manages:
     - State storage (members, capabilities, metadata)
     - Message storage (per-topic message chains)
     - Active WebSocket connections
     - Authorization logic
 
     Can be used in:
-    - FastAPI with per-channel instances
+    - FastAPI with per-space instances
     - Durable Objects (TypeScript port)
     - Other frameworks
     """
 
     def __init__(
         self,
-        channel_id: str,
+        space_id: str,
         state_store: StateStore,
         message_store: MessageStore,
         blob_store: Optional[BlobStore] = None,
@@ -52,18 +52,18 @@ class Channel:
         jwt_expiry_hours: int = 24
     ):
         """
-        Initialize a Channel instance.
+        Initialize a Space instance.
 
         Args:
-            channel_id: Unique channel identifier
-            state_store: State store instance for this channel
-            message_store: Message store instance for this channel
-            blob_store: Optional blob store (shared across channels for deduplication)
-            jwt_secret: JWT signing secret (shared across all channels for consistency)
+            space_id: Unique space identifier
+            state_store: State store instance for this space
+            message_store: Message store instance for this space
+            blob_store: Optional blob store (shared across spaces for deduplication)
+            jwt_secret: JWT signing secret (shared across all spaces for consistency)
             jwt_algorithm: JWT signing algorithm
             jwt_expiry_hours: JWT token expiry in hours
         """
-        self.channel_id = channel_id
+        self.space_id = space_id
         self.state_store = state_store
         self.message_store = message_store
         self.blob_store = blob_store
@@ -77,7 +77,7 @@ class Channel:
         self.crypto = CryptoUtils()
         self.authz = AuthorizationEngine(self.state_store, self.crypto)
 
-        # WebSocket connections for this channel
+        # WebSocket connections for this space
         self.websockets: Set[WebSocket] = set()
 
         # In-memory challenge storage (for authentication)
@@ -167,9 +167,9 @@ class Channel:
         if not self.crypto.verify_signature(message, signature_bytes, user_pubkey_bytes):
             raise ValueError("Invalid signature")
 
-        # Check if user is a member of this channel
+        # Check if user is a member of this space
         if not self.is_member(member_id):
-            raise ValueError("Not a member of this channel")
+            raise ValueError("Not a member of this space")
 
         # Clean up challenge
         del self.challenges[challenge_key]
@@ -199,7 +199,7 @@ class Channel:
         expiry_seconds = now_seconds + (self.jwt_expiry_hours * 3600)
 
         payload = {
-            "channel_id": self.channel_id,
+            "space_id": self.space_id,
             "id": member_id,
             "iat": now_seconds,
             "exp": expiry_seconds
@@ -222,7 +222,7 @@ class Channel:
             Decoded payload dictionary
 
         Raises:
-            ValueError: If token is invalid, expired, or for wrong channel
+            ValueError: If token is invalid, expired, or for wrong space
         """
         if not self.jwt_secret:
             raise ValueError("JWT secret not configured")
@@ -230,9 +230,9 @@ class Channel:
         try:
             payload = jwt.decode(token, self.jwt_secret, algorithms=[self.jwt_algorithm])
 
-            # Verify token is for this channel
-            if payload.get("channel_id") != self.channel_id:
-                raise ValueError("Token channel mismatch")
+            # Verify token is for this space
+            if payload.get("space_id") != self.space_id:
+                raise ValueError("Token space mismatch")
 
             return payload
 
@@ -252,7 +252,7 @@ class Channel:
             Dictionary with new token and expires_at (in milliseconds)
 
         Raises:
-            ValueError: If token is invalid, expired, or for wrong channel
+            ValueError: If token is invalid, expired, or for wrong space
         """
         # Verify the current token
         payload = self.verify_jwt(token)
@@ -271,10 +271,10 @@ class Channel:
             token: JWT token string
 
         Returns:
-            Dictionary with channel_id and public_key
+            Dictionary with space_id and public_key
 
         Raises:
-            ValueError: If token is invalid, expired, or for wrong channel
+            ValueError: If token is invalid, expired, or for wrong space
         """
         return self.verify_jwt(token)
 
@@ -311,7 +311,7 @@ class Channel:
             raise ValueError("No read permission")
 
         # Get state
-        state = self.state_store.get_state(self.channel_id, path)
+        state = self.state_store.get_state(self.space_id, path)
         if state is None:
             raise ValueError("State not found")
 
@@ -362,7 +362,7 @@ class Channel:
         should_track_usage = self._check_tool_limit(member_id)
 
         # Check if state already exists
-        existing = self.state_store.get_state(self.channel_id, path)
+        existing = self.state_store.get_state(self.space_id, path)
         operation = "write" if existing else "create"
 
         # Check permission
@@ -376,11 +376,11 @@ class Channel:
         if signed_at is None:
             raise ValueError("signed_at is required for all state writes")
 
-        # Verify signature over (channel_id | path | data | signed_at)
-        # Including channel_id prevents signature replay attacks across different channels
+        # Verify signature over (space_id | path | data | signed_at)
+        # Including space_id prevents signature replay attacks across different spaces
         # Using | as field separator prevents confusion attacks
         message_to_sign = '|'.join([
-            self.channel_id,
+            self.space_id,
             path,
             data,
             str(signed_at)
@@ -432,12 +432,12 @@ class Channel:
                     raise ValueError(f"Role grant role_id mismatch: path has '{path_role_id}' but data has '{role_grant_dict.get('role_id')}'")
 
             # Verify the role grant (subset checking)
-            if not self.authz.verify_role_grant(self.channel_id, path, role_grant_dict, signed_by):
+            if not self.authz.verify_role_grant(self.space_id, path, role_grant_dict, signed_by):
                 raise ValueError("Invalid role grant or privilege escalation")
 
         # Store state with signature
         self.state_store.set_state(
-            self.channel_id,
+            self.space_id,
             path,
             data,
             signature,
@@ -455,7 +455,7 @@ class Channel:
                 if tool_def.get('use_limit') is not None:
                     # Tool has use_limit, initialize tracking
                     tool_id = path.split('/')[-1]
-                    self.state_store.initialize_tool_usage(self.channel_id, tool_id)
+                    self.state_store.initialize_tool_usage(self.space_id, tool_id)
             except Exception:
                 pass  # Invalid JSON, will be caught elsewhere
 
@@ -492,12 +492,12 @@ class Channel:
             raise ValueError("No delete permission")
 
         # Delete state
-        if not self.state_store.delete_state(self.channel_id, path):
+        if not self.state_store.delete_state(self.space_id, path):
             raise ValueError("State not found")
 
     def list_state(self, prefix: str) -> List[Dict[str, Any]]:
         """List state entries matching prefix"""
-        return self.state_store.list_state(self.channel_id, prefix)
+        return self.state_store.list_state(self.space_id, prefix)
 
     # ========================================================================
     # Message Operations
@@ -554,7 +554,7 @@ class Channel:
             raise ValueError("Invalid message signature")
 
         # Get current chain head
-        current_head = self.message_store.get_chain_head(self.channel_id, topic_id)
+        current_head = self.message_store.get_chain_head(self.space_id, topic_id)
 
         # Validate prev_hash
         if current_head is None:
@@ -567,7 +567,7 @@ class Channel:
         # Store message
         server_timestamp = int(time.time() * 1000)
         self.message_store.add_message(
-            channel_id=self.channel_id,
+            space_id=self.space_id,
             topic_id=topic_id,
             message_hash=message_hash,
             prev_hash=prev_hash,
@@ -628,7 +628,7 @@ class Channel:
 
         # Get messages
         return self.message_store.get_messages(
-            self.channel_id,
+            self.space_id,
             topic_id,
             from_ts,
             to_ts,
@@ -658,7 +658,7 @@ class Channel:
             raise ValueError("No read permission")
 
         # Get message
-        message = self.message_store.get_message_by_hash(self.channel_id, topic_id, message_hash)
+        message = self.message_store.get_message_by_hash(self.space_id, topic_id, message_hash)
         if not message:
             raise ValueError("Message not found")
 
@@ -676,7 +676,7 @@ class Channel:
     ) -> bool:
         """Check if user has permission for operation on path"""
         return self.authz.check_permission(
-            self.channel_id,
+            self.space_id,
             user_id,
             operation,
             path
@@ -690,7 +690,7 @@ class Channel:
     ) -> bool:
         """Verify a capability grant is valid"""
         return self.authz.verify_capability_grant(
-            self.channel_id,
+            self.space_id,
             path,
             capability_dict,
             signed_by
@@ -702,40 +702,40 @@ class Channel:
 
     def is_member(self, member_id: str) -> bool:
         """
-        Check if user or tool is a member of this channel.
+        Check if user or tool is a member of this space.
 
         Args:
             user_id: User ID (U_*) or Tool ID (T_*)
 
         Returns:
-            True if identifier is the channel owner, a member, or a registered tool
+            True if identifier is the space owner, a member, or a registered tool
         """
-        # Channel creator is always a member
+        # Space creator is always a member
         member_public_key = extract_public_key(member_id)
-        channel_public_key = extract_public_key(self.channel_id)
-        if member_public_key == channel_public_key:
+        space_public_key = extract_public_key(self.space_id)
+        if member_public_key == space_public_key:
             return True
 
         # Check if it's a tool
         if member_id.startswith('T'):
-            tool = self.state_store.get_state(self.channel_id, f"auth/tools/{member_id}")
+            tool = self.state_store.get_state(self.space_id, f"auth/tools/{member_id}")
             return tool is not None
 
         # Check if it's a regular user
-        user = self.state_store.get_state(self.channel_id, f"auth/users/{member_id}")
+        user = self.state_store.get_state(self.space_id, f"auth/users/{member_id}")
         return user is not None
 
-    def is_channel_admin(self, user_id: str) -> bool:
+    def is_space_admin(self, user_id: str) -> bool:
         """
-        Check if user is a channel admin (currently just the channel owner).
+        Check if user is a space admin (currently just the space owner).
 
         Args:
             user_id: The user's public key
 
         Returns:
-            True if user is the channel owner (channel_id matches user_id)
+            True if user is the space owner (space_id matches user_id)
         """
-        return user_id == self.channel_id
+        return user_id == self.space_id
 
     def _check_tool_limit(self, member_id: str) -> bool:
         """
@@ -760,9 +760,9 @@ class Channel:
         tool_id = member_id
 
         # Get tool definition from state
-        tool_data = self.state_store.get_state(self.channel_id, f"auth/tools/{tool_id}")
+        tool_data = self.state_store.get_state(self.space_id, f"auth/tools/{tool_id}")
         if not tool_data:
-            raise ValueError(f"Tool {tool_id} not found in channel")
+            raise ValueError(f"Tool {tool_id} not found in space")
 
         # Check if tool has use_limit
         import base64
@@ -778,7 +778,7 @@ class Channel:
             return False
 
         # Get current usage
-        usage = self.state_store.get_tool_usage(self.channel_id, tool_id)
+        usage = self.state_store.get_tool_usage(self.space_id, tool_id)
         current_count = usage['use_count'] if usage else 0
 
         # Check limit
@@ -803,7 +803,7 @@ class Channel:
             return
 
         now = int(time.time() * 1000)
-        self.state_store.increment_tool_usage(self.channel_id, user_public_key, now)
+        self.state_store.increment_tool_usage(self.space_id, user_public_key, now)
 
     # ========================================================================
     # Blob Management
@@ -813,7 +813,7 @@ class Channel:
         """
         Authorize a blob upload.
 
-        Any authenticated member of the channel can upload blobs.
+        Any authenticated member of the space can upload blobs.
 
         Args:
             user_id: The user's public key
@@ -830,7 +830,7 @@ class Channel:
 
         # Check if user is a member
         if not self.is_member(user_id):
-            raise ValueError("Not a member of this channel")
+            raise ValueError("Not a member of this space")
 
         return True
 
@@ -838,7 +838,7 @@ class Channel:
         """
         Authorize a blob download.
 
-        Users can download blobs only if their channel has a reference to the blob.
+        Users can download blobs only if their space has a reference to the blob.
 
         Args:
             user_id: The user's public key
@@ -856,11 +856,11 @@ class Channel:
 
         # Check if user is a member
         if not self.is_member(user_id):
-            raise ValueError("Not a member of this channel")
+            raise ValueError("Not a member of this space")
 
-        # Check if this channel has a reference to the blob
-        if not blob_metadata.has_reference(self.channel_id):
-            raise ValueError("Blob belongs to a different channel")
+        # Check if this space has a reference to the blob
+        if not blob_metadata.has_reference(self.space_id):
+            raise ValueError("Blob belongs to a different space")
 
         return True
 
@@ -868,7 +868,7 @@ class Channel:
         """
         Authorize a blob deletion (reference removal).
 
-        Only the uploader or channel admin can delete their channel's reference to a blob.
+        Only the uploader or space admin can delete their space's reference to a blob.
 
         Args:
             user_id: The user's public key
@@ -886,27 +886,27 @@ class Channel:
 
         # Check if user is a member
         if not self.is_member(user_id):
-            raise ValueError("Not a member of this channel")
+            raise ValueError("Not a member of this space")
 
-        # Check if this channel has a reference to the blob
-        if not blob_metadata.has_reference(self.channel_id):
-            raise ValueError("Blob belongs to a different channel")
+        # Check if this space has a reference to the blob
+        if not blob_metadata.has_reference(self.space_id):
+            raise ValueError("Blob belongs to a different space")
 
-        # Get the specific reference for this channel and user
-        reference = blob_metadata.get_reference(self.channel_id, user_id)
+        # Get the specific reference for this space and user
+        reference = blob_metadata.get_reference(self.space_id, user_id)
 
         # Check if user is uploader or admin
         is_uploader = (reference is not None)
-        is_admin = self.is_channel_admin(user_id)
+        is_admin = self.is_space_admin(user_id)
 
         if not (is_uploader or is_admin):
-            raise ValueError("Only the uploader or channel admin can delete this blob")
+            raise ValueError("Only the uploader or space admin can delete this blob")
 
         return True
 
     def upload_blob(self, user_id: str, token: str, blob_id: str, blob_data: bytes) -> dict:
         """
-        Upload a blob to the channel with authorization and validation.
+        Upload a blob to the space with authorization and validation.
 
         Args:
             user_id: The user's public key
@@ -922,7 +922,7 @@ class Channel:
             FileExistsError: If blob reference already exists
         """
         if not self.blob_store:
-            raise ValueError("Blob store not configured for this channel")
+            raise ValueError("Blob store not configured for this space")
 
         # Check tool use limit BEFORE processing (returns True if usage should be tracked)
         should_track_usage = self._check_tool_limit(user_id)
@@ -936,7 +936,7 @@ class Channel:
             raise ValueError(f"blob_id mismatch: provided {blob_id}, expected {expected_blob_id}")
 
         # Store blob with ownership metadata
-        self.blob_store.add_blob(blob_id, blob_data, self.channel_id, user_id)
+        self.blob_store.add_blob(blob_id, blob_data, self.space_id, user_id)
 
         # Increment tool usage after successful write (only if tool has use_limit)
         if should_track_usage:
@@ -949,7 +949,7 @@ class Channel:
 
     def download_blob(self, user_id: str, token: str, blob_id: str) -> Optional[bytes]:
         """
-        Download a blob from the channel with authorization.
+        Download a blob from the space with authorization.
 
         Args:
             user_id: The user's public key
@@ -963,7 +963,7 @@ class Channel:
             ValueError: If authorization fails or blob_store not configured
         """
         if not self.blob_store:
-            raise ValueError("Blob store not configured for this channel")
+            raise ValueError("Blob store not configured for this space")
 
         # Get blob metadata for authorization
         metadata = self.blob_store.get_blob_metadata(blob_id)
@@ -992,7 +992,7 @@ class Channel:
             ValueError: If authorization fails or blob_store not configured
         """
         if not self.blob_store:
-            raise ValueError("Blob store not configured for this channel")
+            raise ValueError("Blob store not configured for this space")
 
         # Get blob metadata for authorization
         metadata = self.blob_store.get_blob_metadata(blob_id)
@@ -1007,9 +1007,9 @@ class Channel:
 
     def delete_blob(self, user_id: str, token: str, blob_id: str) -> bool:
         """
-        Delete a blob reference from the channel with authorization.
+        Delete a blob reference from the space with authorization.
 
-        Removes the channel's reference to the blob. If no references remain,
+        Removes the space's reference to the blob. If no references remain,
         the blob content is also deleted.
 
         Args:
@@ -1024,7 +1024,7 @@ class Channel:
             ValueError: If authorization fails or blob_store not configured
         """
         if not self.blob_store:
-            raise ValueError("Blob store not configured for this channel")
+            raise ValueError("Blob store not configured for this space")
 
         # Get blob metadata for authorization
         metadata = self.blob_store.get_blob_metadata(blob_id)
@@ -1035,7 +1035,7 @@ class Channel:
         self.authorize_blob_delete(user_id, token, metadata)
 
         # Remove the reference (will delete blob content if no references remain)
-        return self.blob_store.remove_blob_reference(blob_id, self.channel_id, user_id)
+        return self.blob_store.remove_blob_reference(blob_id, self.space_id, user_id)
 
     # ========================================================================
     # WebSocket Management
@@ -1043,7 +1043,7 @@ class Channel:
 
     async def handle_websocket(self, websocket: WebSocket) -> None:
         """
-        Handle a WebSocket connection for this channel.
+        Handle a WebSocket connection for this space.
 
         Manages the full lifecycle: accept, keep-alive, ping/pong, and cleanup.
 
@@ -1082,7 +1082,7 @@ class Channel:
             self.websockets.discard(websocket)
 
     def disconnect_websocket(self, websocket: WebSocket) -> None:
-        """Remove a WebSocket connection from this channel"""
+        """Remove a WebSocket connection from this space"""
         self.websockets.discard(websocket)
 
     async def broadcast_message(self, message: dict) -> None:
@@ -1120,7 +1120,7 @@ class Channel:
     ) -> str:
         """Compute the hash for a message"""
         return self.crypto.compute_message_hash(
-            self.channel_id,
+            self.space_id,
             topic_id,
             prev_hash,
             encrypted_payload,
@@ -1154,18 +1154,18 @@ class Channel:
     # ========================================================================
 
     def get_stats(self) -> dict:
-        """Get channel statistics"""
+        """Get space statistics"""
         # Count messages across all topics (this is expensive, consider caching)
         # For now, return basic info
         return {
-            "channel_id": self.channel_id,
+            "space_id": self.space_id,
             "websocket_connections": self.get_connection_count(),
             # Could add: message count, member count, storage size, etc.
         }
 
     def close(self) -> None:
         """
-        Close the channel and cleanup resources.
+        Close the space and cleanup resources.
         Useful for testing or graceful shutdown.
         """
         # Close all WebSocket connections

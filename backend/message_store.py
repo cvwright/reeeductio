@@ -28,7 +28,7 @@ class MessageStore(ABC):
     @abstractmethod
     def add_message(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         message_hash: str,
         prev_hash: Optional[str],
@@ -41,8 +41,8 @@ class MessageStore(ABC):
         Add a new message to a topic
 
         Args:
-            channel_id: Channel identifier
-            topic_id: Topic identifier within the channel
+            space_id: Space identifier
+            topic_id: Topic identifier within the space
             message_hash: Content-addressed hash of the message
             prev_hash: Hash of the previous message in the chain (None for first message)
             encrypted_payload: Encrypted message content
@@ -55,7 +55,7 @@ class MessageStore(ABC):
     @abstractmethod
     def get_messages(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         from_ts: Optional[int] = None,
         to_ts: Optional[int] = None,
@@ -65,8 +65,8 @@ class MessageStore(ABC):
         Query messages with time-based filtering
 
         Args:
-            channel_id: Channel identifier
-            topic_id: Topic identifier within the channel
+            space_id: Space identifier
+            topic_id: Topic identifier within the space
             from_ts: Optional start timestamp (inclusive)
             to_ts: Optional end timestamp (inclusive)
             limit: Maximum number of messages to return
@@ -86,7 +86,7 @@ class MessageStore(ABC):
     @abstractmethod
     def get_message_by_hash(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         message_hash: str
     ) -> Optional[Dict[str, Any]]:
@@ -94,8 +94,8 @@ class MessageStore(ABC):
         Get a specific message by its hash
 
         Args:
-            channel_id: Channel identifier
-            topic_id: Topic identifier within the channel
+            space_id: Space identifier
+            topic_id: Topic identifier within the space
             message_hash: Content-addressed hash of the message
 
         Returns:
@@ -114,15 +114,15 @@ class MessageStore(ABC):
     @abstractmethod
     def get_chain_head(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str
     ) -> Optional[Dict[str, Any]]:
         """
         Get the most recent message in a topic (chain head)
 
         Args:
-            channel_id: Channel identifier
-            topic_id: Topic identifier within the channel
+            space_id: Space identifier
+            topic_id: Topic identifier within the space
 
         Returns:
             Dictionary containing:

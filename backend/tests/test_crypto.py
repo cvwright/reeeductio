@@ -50,7 +50,7 @@ def test_message_hashing(crypto):
     sender_id = encode_user_id(public_key_bytes)
 
     msg_hash = crypto.compute_message_hash(
-        "channel1",
+        "space1",
         "general-chat",
         None,
         "encrypted_payload",
@@ -70,7 +70,7 @@ def test_message_signature_verification(crypto):
     sender_id = encode_user_id(public_key_bytes)
 
     msg_hash = crypto.compute_message_hash(
-        "channel1",
+        "space1",
         "general-chat",
         None,
         "encrypted_payload",

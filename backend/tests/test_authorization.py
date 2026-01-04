@@ -15,28 +15,28 @@ sign_state_entry = conftest.sign_state_entry
 sign_and_store_state = conftest.sign_and_store_state
 
 
-def test_channel_creator_god_mode(authz, admin_keypair):
-    """Test that channel creator has god mode permissions"""
-    channel_id = admin_keypair['channel_id']
+def test_space_creator_god_mode(authz, admin_keypair):
+    """Test that space creator has god mode permissions"""
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
 
-    assert authz.check_permission(channel_id, admin_id, "write", "anything")
+    assert authz.check_permission(space_id, admin_id, "write", "anything")
 
 
 def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keypair):
     """Test that users can use granted capabilities"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
 
-    # Add the user to the channel
+    # Add the user to the space
     user_info = {
         "user_id": user_id
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -52,7 +52,7 @@ def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keyp
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=object_path,
         contents=object_contents,
         signer_private_key=admin_private,
@@ -67,7 +67,7 @@ def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keyp
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/read_all",
         contents=capability,
         signer_private_key=admin_private,
@@ -76,16 +76,16 @@ def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keyp
     )
 
     # Test user now has read permission
-    assert authz.check_permission(channel_id, user_id, "read", "test/alice")
+    assert authz.check_permission(space_id, user_id, "read", "test/alice")
 
 
 def test_ungranted_capability_rejection(authz, admin_keypair, user_keypair):
     """Test that users don't have capabilities that weren't granted"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     user_id = user_keypair['user_id']
 
     # User doesn't have write permission (no capability stored)
-    assert not authz.check_permission(channel_id, user_id, "write", "members/alice")
+    assert not authz.check_permission(space_id, user_id, "write", "members/alice")
 
 
 def test_path_matching(authz):
@@ -165,18 +165,18 @@ def test_privilege_escalation_prevention(authz):
 
 def test_modify_capability(state_store, authz, admin_keypair, user_keypair):
     """Test that modify capability works correctly"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
 
-    # Add the user to the channel
+    # Add the user to the space
     user_info = {
         "user_id": user_id
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -191,7 +191,7 @@ def test_modify_capability(state_store, authz, admin_keypair, user_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/modify_test",
         contents=capability,
         signer_private_key=admin_private,
@@ -200,29 +200,29 @@ def test_modify_capability(state_store, authz, admin_keypair, user_keypair):
     )
 
     # User should have modify permission
-    assert authz.check_permission(channel_id, user_id, "modify", "test/data")
+    assert authz.check_permission(space_id, user_id, "modify", "test/data")
 
     # User should NOT have create permission (modify doesn't grant create)
-    assert not authz.check_permission(channel_id, user_id, "create", "test/data")
+    assert not authz.check_permission(space_id, user_id, "create", "test/data")
 
     # User should NOT have delete permission (modify doesn't grant delete)
-    assert not authz.check_permission(channel_id, user_id, "delete", "test/data")
+    assert not authz.check_permission(space_id, user_id, "delete", "test/data")
 
 
 def test_delete_capability(state_store, authz, admin_keypair, user_keypair):
     """Test that delete capability works correctly"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
 
-    # Add the user to the channel
+    # Add the user to the space
     user_info = {
         "user_id": user_id
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -237,7 +237,7 @@ def test_delete_capability(state_store, authz, admin_keypair, user_keypair):
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/delete_test",
         contents=capability,
         signer_private_key=admin_private,
@@ -246,29 +246,29 @@ def test_delete_capability(state_store, authz, admin_keypair, user_keypair):
     )
 
     # User should have delete permission
-    assert authz.check_permission(channel_id, user_id, "delete", "test/data")
+    assert authz.check_permission(space_id, user_id, "delete", "test/data")
 
     # User should NOT have create permission (delete doesn't grant create)
-    assert not authz.check_permission(channel_id, user_id, "create", "test/data")
+    assert not authz.check_permission(space_id, user_id, "create", "test/data")
 
     # User should NOT have modify permission (delete doesn't grant modify)
-    assert not authz.check_permission(channel_id, user_id, "modify", "test/data")
+    assert not authz.check_permission(space_id, user_id, "modify", "test/data")
 
 
 def test_write_grants_all_operations(state_store, authz, admin_keypair, user_keypair):
     """Test that write capability grants create, modify, delete, and read"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
 
-    # Add the user to the channel
+    # Add the user to the space
     user_info = {
         "user_id": user_id
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -283,7 +283,7 @@ def test_write_grants_all_operations(state_store, authz, admin_keypair, user_key
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/write_test",
         contents=capability,
         signer_private_key=admin_private,
@@ -292,11 +292,11 @@ def test_write_grants_all_operations(state_store, authz, admin_keypair, user_key
     )
 
     # Write should grant all operations
-    assert authz.check_permission(channel_id, user_id, "read", "test/data")
-    assert authz.check_permission(channel_id, user_id, "create", "test/data")
-    assert authz.check_permission(channel_id, user_id, "modify", "test/data")
-    assert authz.check_permission(channel_id, user_id, "delete", "test/data")
-    assert authz.check_permission(channel_id, user_id, "write", "test/data")
+    assert authz.check_permission(space_id, user_id, "read", "test/data")
+    assert authz.check_permission(space_id, user_id, "create", "test/data")
+    assert authz.check_permission(space_id, user_id, "modify", "test/data")
+    assert authz.check_permission(space_id, user_id, "delete", "test/data")
+    assert authz.check_permission(space_id, user_id, "write", "test/data")
 
 
 def test_modify_delete_independence(authz):
@@ -363,17 +363,17 @@ def test_write_dominates_all_operations(authz):
 
 def test_owned_modify_capability(state_store, authz, admin_keypair, user_keypair):
     """Test that must_be_owner=true restricts modify to owned objects"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
     user_private = user_keypair['private']
 
-    # Add the user to the channel
+    # Add the user to the space
     user_info = {"user_id": user_id}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -389,7 +389,7 @@ def test_owned_modify_capability(state_store, authz, admin_keypair, user_keypair
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/modify_owned",
         contents=capability,
         signer_private_key=admin_private,
@@ -401,7 +401,7 @@ def test_owned_modify_capability(state_store, authz, admin_keypair, user_keypair
     user_doc = {"title": "User's document"}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="docs/user_doc",
         contents=user_doc,
         signer_private_key=user_private,
@@ -413,7 +413,7 @@ def test_owned_modify_capability(state_store, authz, admin_keypair, user_keypair
     admin_doc = {"title": "Admin's document"}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="docs/admin_doc",
         contents=admin_doc,
         signer_private_key=admin_private,
@@ -422,25 +422,25 @@ def test_owned_modify_capability(state_store, authz, admin_keypair, user_keypair
     )
 
     # User should be able to modify their own document
-    assert authz.check_permission(channel_id, user_id, "modify", "docs/user_doc")
+    assert authz.check_permission(space_id, user_id, "modify", "docs/user_doc")
 
     # User should NOT be able to modify admin's document
-    assert not authz.check_permission(channel_id, user_id, "modify", "docs/admin_doc")
+    assert not authz.check_permission(space_id, user_id, "modify", "docs/admin_doc")
 
 
 def test_owned_delete_capability(state_store, authz, admin_keypair, user_keypair):
     """Test that must_be_owner=true restricts delete to owned objects"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
     user_private = user_keypair['private']
 
-    # Add the user to the channel
+    # Add the user to the space
     user_info = {"user_id": user_id}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -456,7 +456,7 @@ def test_owned_delete_capability(state_store, authz, admin_keypair, user_keypair
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/delete_owned",
         contents=capability,
         signer_private_key=admin_private,
@@ -468,7 +468,7 @@ def test_owned_delete_capability(state_store, authz, admin_keypair, user_keypair
     user_file = {"name": "user_file.txt"}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="files/user_file",
         contents=user_file,
         signer_private_key=user_private,
@@ -480,7 +480,7 @@ def test_owned_delete_capability(state_store, authz, admin_keypair, user_keypair
     admin_file = {"name": "admin_file.txt"}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path="files/admin_file",
         contents=admin_file,
         signer_private_key=admin_private,
@@ -489,24 +489,24 @@ def test_owned_delete_capability(state_store, authz, admin_keypair, user_keypair
     )
 
     # User should be able to delete their own file
-    assert authz.check_permission(channel_id, user_id, "delete", "files/user_file")
+    assert authz.check_permission(space_id, user_id, "delete", "files/user_file")
 
     # User should NOT be able to delete admin's file
-    assert not authz.check_permission(channel_id, user_id, "delete", "files/admin_file")
+    assert not authz.check_permission(space_id, user_id, "delete", "files/admin_file")
 
 
 def test_owned_create_always_allowed(state_store, authz, admin_keypair, user_keypair):
     """Test that must_be_owner=true doesn't restrict create operations"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
 
-    # Add the user to the channel
+    # Add the user to the space
     user_info = {"user_id": user_id}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -522,7 +522,7 @@ def test_owned_create_always_allowed(state_store, authz, admin_keypair, user_key
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/create_owned",
         contents=capability,
         signer_private_key=admin_private,
@@ -531,21 +531,21 @@ def test_owned_create_always_allowed(state_store, authz, admin_keypair, user_key
     )
 
     # User should be able to create (ownership check skipped for create)
-    assert authz.check_permission(channel_id, user_id, "create", "posts/new_post")
+    assert authz.check_permission(space_id, user_id, "create", "posts/new_post")
 
 
 def test_owned_nonexistent_entry(state_store, authz, admin_keypair, user_keypair):
     """Test that must_be_owner=true denies access to non-existent entries"""
-    channel_id = admin_keypair['channel_id']
+    space_id = admin_keypair['space_id']
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
     user_id = user_keypair['user_id']
 
-    # Add the user to the channel
+    # Add the user to the space
     user_info = {"user_id": user_id}
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}",
         contents=user_info,
         signer_private_key=admin_private,
@@ -561,7 +561,7 @@ def test_owned_nonexistent_entry(state_store, authz, admin_keypair, user_keypair
     }
     sign_and_store_state(
         state_store=state_store,
-        channel_id=channel_id,
+        space_id=space_id,
         path=f"auth/users/{user_id}/rights/modify_owned_items",
         contents=capability,
         signer_private_key=admin_private,
@@ -571,7 +571,7 @@ def test_owned_nonexistent_entry(state_store, authz, admin_keypair, user_keypair
 
     # User should NOT be able to modify non-existent entry
     # (no entry exists, so can't verify ownership)
-    assert not authz.check_permission(channel_id, user_id, "modify", "items/nonexistent")
+    assert not authz.check_permission(space_id, user_id, "modify", "items/nonexistent")
 
 
 def test_ownership_dominance_unrestricted_over_restricted(authz):

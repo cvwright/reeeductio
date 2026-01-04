@@ -36,7 +36,7 @@ docker run -d \
 The container uses volume mounts to persist data:
 
 - **SQLite Databases**: `./data/*.db`
-  - `state.db` - Channel and user state
+  - `state.db` - Space and user state
   - `messages.db` - Message storage
 - **Blob Storage**: `./data/blobs/` (when using filesystem storage)
 

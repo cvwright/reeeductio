@@ -1,7 +1,7 @@
 # Login API
 For convenience, the server can offer an oldschool "login" API with traditional username and password for backwards compatibility with legacy infrastructure like password managers.
 
-The goal of the login API is to let a client use the oldschool username and password to safely derive a keypair.  Then the keypair can be used to authenticate to channels using modern cryptographic methods.
+The goal of the login API is to let a client use the oldschool username and password to safely derive a keypair.  Then the keypair can be used to authenticate to spaces using modern cryptographic methods.
 
 NOTE that the login API does not need to be running on the same server where the user will eventually use their keypair to authenticate.
 
@@ -15,16 +15,16 @@ This design uses **OPAQUE** (RFC 9497) with **key wrapping** to enable password-
 
 ### Architecture: Separate Login Service
 
-The login functionality is implemented as a **separate HTTP backend service** (distinct from the channel server) that uses the channel API as its storage layer. This means:
+The login functionality is implemented as a **separate HTTP backend service** (distinct from the space server) that uses the space API as its storage layer. This means:
 
 - **Login Service**: New FastAPI application that handles `/api/v1/login/*` endpoints
   - Implements OPAQUE protocol flows (registration, login, password change)
-  - Makes HTTP calls to the channel server's REST API to store/retrieve state
-  - Owns a dedicated "login channel" for storing user records
-  - No direct database - delegates all persistence to channel server
+  - Makes HTTP calls to the space server's REST API to store/retrieve state
+  - Owns a dedicated "login space" for storing user records
+  - No direct database - delegates all persistence to space server
 
-- **Channel Server**: Existing reeeductio backend
-  - Provides storage via `/api/v1/channels/{channel_id}/state/{path}` endpoints
+- **Space Server**: Existing reeeductio backend
+  - Provides storage via `/api/v1/spaces/{space_id}/state/{path}` endpoints
   - Unaware that login service is using it for storage
   - Handles authentication via Ed25519 challenge-response as usual
 
@@ -33,11 +33,11 @@ This separation provides defense in depth, independent scaling, and cleaner arch
 ## Architecture Goals
 
 1. **Server never learns password** - OPAQUE ensures password privacy
-2. **Stable user identity** - Password changes don't affect `user_id` or channel memberships
-3. **Key recovery** - Encrypted channel keys survive password rotation
+2. **Stable user identity** - Password changes don't affect `user_id` or space memberships
+3. **Key recovery** - Encrypted space keys survive password rotation
 4. **Brute-force resistance** - Client-side Argon2 + server-side rate limiting
 5. **Forward secrecy** - Old passwords cannot decrypt new wrappings
-6. **Federated design** - Login server can be separate from channel server
+6. **Federated design** - Login server can be separate from space server
 
 ## Key Hierarchy
 
@@ -57,7 +57,7 @@ Password + Username
         │                                           │       └─> Wrap/Unwrap master_secret
         │                                                               │
         │                                                               ├─> Long-term auth_seed (32 bytes) → STABLE Ed25519 keypair
-        │                                                               ├─> Long-term recovery_key (32 bytes) → Decrypt channel keys
+        │                                                               ├─> Long-term recovery_key (32 bytes) → Decrypt space keys
         │                                                               └─> Long-term backup_key (32 bytes) → Future use
 ```
 
@@ -65,16 +65,16 @@ Password + Username
 
 The **master_secret** (96 random bytes) is generated ONCE during registration and contains:
 - `long_term_auth_seed` (32 bytes) → Derives STABLE Ed25519 signing keypair → STABLE `user_id`
-- `long_term_recovery_key` (32 bytes) → Encrypts/decrypts channel private keys
+- `long_term_recovery_key` (32 bytes) → Encrypts/decrypts space private keys
 - `long_term_backup_key` (32 bytes) → Reserved for encrypted cloud backups
 
 The master_secret is **wrapped** (encrypted) with a password-derived `key_wrapping_key`. When the password changes:
 1. Derive NEW `key_wrapping_key` from new password
 2. **Re-wrap the SAME master_secret** with new key
 3. Update server storage (only `opaque_record` and `wrapped_master_secret` change)
-4. `user_id`, `auth_public_key`, and `encrypted_channel_keys` remain UNCHANGED
+4. `user_id`, `auth_public_key`, and `encrypted_space_keys` remain UNCHANGED
 
-**Result:** Password rotation does NOT affect user identity or channel memberships.
+**Result:** Password rotation does NOT affect user identity or space memberships.
 
 ## Protocol Flows
 
@@ -90,8 +90,8 @@ The master_secret is **wrapped** (encrypted) with a password-derived `key_wrappi
 7. Derive STABLE Ed25519 keypair from `master_secret[0:32]`
 8. Encode `user_id` from Ed25519 public key (typed identifier: `U_...`)
 9. Wrap `master_secret` with `key_wrapping_key` using AES-256-GCM
-10. Encrypt channel private keys with `long_term_recovery_key` using AES-256-GCM
-11. Send to server: `username`, `user_id`, `auth_public_key`, `opaque_record`, `wrapped_master_secret`, `encrypted_channel_keys`
+10. Encrypt space private keys with `long_term_recovery_key` using AES-256-GCM
+11. Send to server: `username`, `user_id`, `auth_public_key`, `opaque_record`, `wrapped_master_secret`, `encrypted_space_keys`
 
 **Server:**
 Store in database:
@@ -100,7 +100,7 @@ Store in database:
 - `auth_public_key` (STABLE, Ed25519 public key)
 - `opaque_record` (OPAQUE server state)
 - `wrapped_master_secret` (nonce + ciphertext, re-wrapped on password change)
-- `encrypted_channel_keys` (JSON: `{channel_id: {nonce, ciphertext}}`)
+- `encrypted_space_keys` (JSON: `{space_id: {nonce, ciphertext}}`)
 - Timestamps, rate limiting metadata
 
 ### Login
@@ -108,20 +108,20 @@ Store in database:
 **Client:**
 1. Harden password: `Argon2id(password, SHA256(username))`
 2. OPAQUE login: Generate `login_request`
-3. Server responds with `login_response` + `wrapped_master_secret` + `encrypted_channel_keys`
+3. Server responds with `login_response` + `wrapped_master_secret` + `encrypted_space_keys`
 4. Finalize OPAQUE: Verify server, get `export_key`
 5. Derive `key_wrapping_key` from `export_key` using HKDF-SHA256
 6. Unwrap `master_secret` using `key_wrapping_key` + AES-256-GCM
 7. Extract `long_term_auth_seed`, `long_term_recovery_key`, `long_term_backup_key`
 8. Derive STABLE Ed25519 keypair from `long_term_auth_seed`
 9. Verify `user_id` matches derived public key (integrity check)
-10. Decrypt channel keys using `long_term_recovery_key` + AES-256-GCM
+10. Decrypt space keys using `long_term_recovery_key` + AES-256-GCM
 
 **Server:**
 1. Lookup user by `username`
 2. Rate limiting check (exponential backoff after 3/5/10 failures)
 3. OPAQUE verification using stored `opaque_record`
-4. Return `login_response`, `wrapped_master_secret`, `encrypted_channel_keys`
+4. Return `login_response`, `wrapped_master_secret`, `encrypted_space_keys`
 5. Log audit event
 
 ### Password Change
@@ -136,16 +136,16 @@ Store in database:
 **Server:**
 1. Verify old password (via JWT token from login)
 2. Atomic update: Replace `opaque_record` and `wrapped_master_secret`
-3. **Do NOT change:** `user_id`, `auth_public_key`, `encrypted_channel_keys`
+3. **Do NOT change:** `user_id`, `auth_public_key`, `encrypted_space_keys`
 4. Update `password_changed_at` timestamp
 5. Invalidate all existing sessions (force re-login)
 
-**Result:** User keeps same `user_id`, all channel memberships preserved, all encrypted data remains accessible.
+**Result:** User keeps same `user_id`, all space memberships preserved, all encrypted data remains accessible.
 
 ## Complete Authentication Flow
 
 ```
-Client                    Login Service             Channel Server
+Client                    Login Service             Space Server
   │                             │                          │
   │  1. OPAQUE Login            │                          │
   ├────────────────────────────>│                          │
@@ -169,14 +169,14 @@ Client                    Login Service             Channel Server
   │     (using user_id pubkey)  │                          │
   │  9. Issue JWT token         │                          │
   │<────────────────────────────────────────────────────── │
-  │  10. Decrypt channel keys   │                          │
+  │  10. Decrypt space keys   │                          │
   │      using recovery_key     │                          │
 ```
 
 **Deployment Options:**
-- **Separate services** (recommended): Login service + Channel service as independent deployments
+- **Separate services** (recommended): Login service + Space service as independent deployments
 - **Same process**: Both services running in one FastAPI app (simpler for development)
-- **Federated**: Multiple organizations run separate login services, all storing to shared channel infrastructure
+- **Federated**: Multiple organizations run separate login services, all storing to shared space infrastructure
 
 ## Cryptographic Primitives
 
@@ -206,30 +206,30 @@ Client                    Login Service             Channel Server
 - **Plaintext:** 96-byte `master_secret`
 - **Ciphertext:** 112 bytes (96 + 16-byte auth tag)
 
-### Channel Key Encryption
+### Space Key Encryption
 - **Algorithm:** AES-256-GCM
 - **Key:** 32-byte `long_term_recovery_key`
-- **Nonce:** 12 random bytes per channel key (cryptographically random)
-- **AAD:** `channel_id.encode()` (binds ciphertext to channel)
+- **Nonce:** 12 random bytes per space key (cryptographically random)
+- **AAD:** `space_id.encode()` (binds ciphertext to space)
 
 ### Ed25519 Signatures
 - **Seed:** `long_term_auth_seed` (32 bytes from master_secret)
 - **Derivation:** `Ed25519PrivateKey.from_private_bytes(seed)`
 - **User ID:** Typed identifier from public key (`U_` prefix + 43-char base64)
 
-## Storage: Channel-Based (No Separate Database)
+## Storage: Space-Based (No Separate Database)
 
-Instead of maintaining a separate database, the login server stores all user records as **signed state entries** in a dedicated reeeductio channel. This provides:
+Instead of maintaining a separate database, the login server stores all user records as **signed state entries** in a dedicated reeeductio space. This provides:
 
-- **No database dependency** - Reuses existing channel state storage (SQLite/Firestore)
-- **Built-in replication** - Channel state is already persistent and replicated
+- **No database dependency** - Reuses existing space state storage (SQLite/Firestore)
+- **Built-in replication** - Space state is already persistent and replicated
 - **Cryptographic audit trail** - All operations are signed by login server's private key
-- **Federation-ready** - Multiple login servers can read/write to same channel
-- **Capability-based access** - Login server acts as admin of the login channel
+- **Federation-ready** - Multiple login servers can read/write to same space
+- **Capability-based access** - Login server acts as admin of the login space
 
-### Channel Structure
+### Space Structure
 
-The login server maintains a **Login Channel** with ID derived from the server's Ed25519 public key:
+The login server maintains a **Login Space** with ID derived from the server's Ed25519 public key:
 
 ```python
 # Server configuration
@@ -237,17 +237,17 @@ LOGIN_SERVER_PRIVATE_KEY = ed25519.Ed25519PrivateKey.from_private_bytes(
     config["login_server_seed"]  # 32-byte seed from config file
 )
 LOGIN_SERVER_PUBLIC_KEY = LOGIN_SERVER_PRIVATE_KEY.public_key()
-LOGIN_CHANNEL_ID = encode_channel_id(LOGIN_SERVER_PUBLIC_KEY.public_bytes_raw())
+LOGIN_SPACE_ID = encode_space_id(LOGIN_SERVER_PUBLIC_KEY.public_bytes_raw())
 ```
 
 ### State Entry Paths
 
-All user data is stored under the `login/` path prefix in the channel state:
+All user data is stored under the `login/` path prefix in the space state:
 
 ```
 /login/users/{username}                     # User account record
 /login/users/{username}/wrapped_secret      # Wrapped master secret
-/login/users/{username}/channel_keys        # Encrypted channel keys
+/login/users/{username}/space_keys        # Encrypted space keys
 /login/rate_limit/{username}                # Rate limiting state (ephemeral)
 /login/audit/{timestamp}/{username}         # Audit log entries
 ```
@@ -269,7 +269,7 @@ All user data is stored under the `login/` path prefix in the channel state:
 ```
 
 **Signature:** Signed by login server's private key
-**Signed by:** Login server tool ID or channel creator ID
+**Signed by:** Login server tool ID or space creator ID
 
 ### Wrapped Master Secret
 
@@ -285,18 +285,18 @@ All user data is stored under the `login/` path prefix in the channel state:
 }
 ```
 
-### Encrypted Channel Keys
+### Encrypted Space Keys
 
-**Path:** `/login/users/{username}/channel_keys`
+**Path:** `/login/users/{username}/space_keys`
 
 **Data (JSON):**
 ```json
 {
-  "C_channel1": {
+  "C_space1": {
     "nonce": "base64-nonce",
     "ciphertext": "base64-ciphertext"
   },
-  "C_channel2": {
+  "C_space2": {
     "nonce": "base64-nonce",
     "ciphertext": "base64-ciphertext"
   }
@@ -343,13 +343,13 @@ All user data is stored under the `login/` path prefix in the channel state:
 The login service is a **separate FastAPI application** with the following configuration:
 
 1. **Ed25519 Private Key** (32-byte seed in config file)
-   - Derives login channel ID (login service is the channel creator)
-   - Signs all state entries written to the channel
-   - God mode on login channel (implicit admin rights as creator)
+   - Derives login space ID (login service is the space creator)
+   - Signs all state entries written to the space
+   - God mode on login space (implicit admin rights as creator)
 
-2. **Channel Server API Endpoint** (where to store state)
-   - HTTP(S) URL to the channel server's REST API
-   - Login service makes HTTP calls to `/api/v1/channels/{channel_id}/state/{path}` endpoints
+2. **Space Server API Endpoint** (where to store state)
+   - HTTP(S) URL to the space server's REST API
+   - Login service makes HTTP calls to `/api/v1/spaces/{space_id}/state/{path}` endpoints
    - Authenticated via Ed25519 challenge-response using login service's private key
 
 3. **OPAQUE Server Identity** (domain name for protocol binding)
@@ -364,10 +364,10 @@ login_service:
   # 32-byte hex-encoded seed for Ed25519 keypair
   private_key_seed: "a1b2c3d4e5f6..."
 
-  # Channel server API endpoint for state storage
-  channel_api_url: "https://api.reeeductio.com"
+  # Space server API endpoint for state storage
+  space_api_url: "https://api.reeeductio.com"
   # OR for local development:
-  # channel_api_url: "http://localhost:8000"
+  # space_api_url: "http://localhost:8000"
 
   # Server identity for OPAQUE protocol
   server_identity: "login.reeeductio.com"
@@ -381,34 +381,34 @@ login_service:
 **Directory Structure:**
 ```
 reeeductio/
-├── backend/           # Existing channel server
+├── backend/           # Existing space server
 │   ├── main.py
-│   ├── channel.py
+│   ├── space.py
 │   └── ...
 └── login-service/     # New login service
     ├── main.py        # FastAPI app for login endpoints
     ├── opaque.py      # OPAQUE protocol implementation
-    ├── storage.py     # ChannelAPIClient for state storage
+    ├── storage.py     # SpaceAPIClient for state storage
     ├── config.yaml    # Login service configuration
     └── requirements.txt
 ```
 
 ### Implementation: State Operations
 
-The login service uses an HTTP client to interact with the channel server's REST API:
+The login service uses an HTTP client to interact with the space server's REST API:
 
 ```python
 import httpx
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-class ChannelAPIClient:
-    """HTTP client for storing login data in channel state via REST API"""
+class SpaceAPIClient:
+    """HTTP client for storing login data in space state via REST API"""
 
     def __init__(self, api_url: str, server_private_key: ed25519.Ed25519PrivateKey):
         self.api_url = api_url.rstrip('/')
         self.private_key = server_private_key
         self.public_key = server_private_key.public_key()
-        self.channel_id = encode_channel_id(self.public_key.public_bytes_raw())
+        self.space_id = encode_space_id(self.public_key.public_bytes_raw())
         self.http_client = httpx.AsyncClient(timeout=10.0)
 
     async def authenticate(self) -> str:
@@ -434,9 +434,9 @@ class ChannelAPIClient:
         return resp.json()["token"]
 
 class LoginStore:
-    def __init__(self, channel_client: ChannelAPIClient):
-        self.client = channel_client
-        self.channel_id = channel_client.channel_id
+    def __init__(self, space_client: SpaceAPIClient):
+        self.client = space_client
+        self.space_id = space_client.space_id
         self._token = None
 
     async def _ensure_authenticated(self):
@@ -449,12 +449,12 @@ class LoginStore:
         return {"Authorization": f"Bearer {self._token}"}
 
     async def get_user(self, username: str) -> Optional[Dict]:
-        """Fetch user record from channel state via HTTP API"""
+        """Fetch user record from space state via HTTP API"""
         await self._ensure_authenticated()
         path = f"login/users/{username}"
 
         resp = await self.client.http_client.get(
-            f"{self.client.api_url}/api/v1/channels/{self.channel_id}/state/{path}",
+            f"{self.client.api_url}/api/v1/spaces/{self.space_id}/state/{path}",
             headers=self._headers()
         )
 
@@ -474,12 +474,12 @@ class LoginStore:
 
         # Sign the state entry
         signed_at = int(time.time() * 1000)
-        message = f"{self.channel_id}|{path}|{base64.b64encode(data).decode()}|{signed_at}"
+        message = f"{self.space_id}|{path}|{base64.b64encode(data).decode()}|{signed_at}"
         signature = self.client.private_key.sign(message.encode())
 
-        # POST to channel state API
+        # POST to space state API
         resp = await self.client.http_client.post(
-            f"{self.client.api_url}/api/v1/channels/{self.channel_id}/state/{path}",
+            f"{self.client.api_url}/api/v1/spaces/{self.space_id}/state/{path}",
             headers=self._headers(),
             json={
                 "data": base64.b64encode(data).decode(),
@@ -505,11 +505,11 @@ class LoginStore:
         data = json.dumps(wrapped_data).encode()
 
         signed_at = int(time.time() * 1000)
-        message = f"{self.channel_id}|{path}|{base64.b64encode(data).decode()}|{signed_at}"
+        message = f"{self.space_id}|{path}|{base64.b64encode(data).decode()}|{signed_at}"
         signature = self.private_key.sign(message.encode())
 
         await self.client.set_state(
-            channel_id=self.channel_id,
+            space_id=self.space_id,
             path=path,
             data=base64.b64encode(data).decode(),
             signature=base64.b64encode(signature).decode(),
@@ -520,20 +520,20 @@ class LoginStore:
     async def get_wrapped_secret(self, username: str) -> Optional[Dict]:
         """Fetch wrapped master secret"""
         path = f"login/users/{username}/wrapped_secret"
-        state = await self.client.get_state(self.channel_id, path)
+        state = await self.client.get_state(self.space_id, path)
         return json.loads(state["data"]) if state else None
 
-    async def store_channel_keys(self, username: str, encrypted_keys: Dict) -> None:
-        """Store encrypted channel keys"""
-        path = f"login/users/{username}/channel_keys"
+    async def store_space_keys(self, username: str, encrypted_keys: Dict) -> None:
+        """Store encrypted space keys"""
+        path = f"login/users/{username}/space_keys"
         data = json.dumps(encrypted_keys).encode()
 
         signed_at = int(time.time() * 1000)
-        message = f"{self.channel_id}|{path}|{base64.b64encode(data).decode()}|{signed_at}"
+        message = f"{self.space_id}|{path}|{base64.b64encode(data).decode()}|{signed_at}"
         signature = self.private_key.sign(message.encode())
 
         await self.client.set_state(
-            channel_id=self.channel_id,
+            space_id=self.space_id,
             path=path,
             data=base64.b64encode(data).decode(),
             signature=base64.b64encode(signature).decode(),
@@ -541,10 +541,10 @@ class LoginStore:
             signed_at=signed_at
         )
 
-    async def get_channel_keys(self, username: str) -> Optional[Dict]:
-        """Fetch encrypted channel keys"""
-        path = f"login/users/{username}/channel_keys"
-        state = await self.client.get_state(self.channel_id, path)
+    async def get_space_keys(self, username: str) -> Optional[Dict]:
+        """Fetch encrypted space keys"""
+        path = f"login/users/{username}/space_keys"
+        state = await self.client.get_state(self.space_id, path)
         return json.loads(state["data"]) if state else None
 
     async def log_audit_event(self, username: str, event_data: Dict) -> None:
@@ -553,11 +553,11 @@ class LoginStore:
         path = f"login/audit/{timestamp}/{username}"
         data = json.dumps(event_data).encode()
 
-        message = f"{self.channel_id}|{path}|{base64.b64encode(data).decode()}|{timestamp}"
+        message = f"{self.space_id}|{path}|{base64.b64encode(data).decode()}|{timestamp}"
         signature = self.private_key.sign(message.encode())
 
         await self.client.set_state(
-            channel_id=self.channel_id,
+            space_id=self.space_id,
             path=path,
             data=base64.b64encode(data).decode(),
             signature=base64.b64encode(signature).decode(),
@@ -566,7 +566,7 @@ class LoginStore:
         )
 ```
 
-### Advantages of Channel-Based Storage
+### Advantages of Space-Based Storage
 
 1. **Zero Additional Infrastructure**
    - No PostgreSQL, MySQL, or separate database to manage
@@ -578,28 +578,28 @@ class LoginStore:
    - Audit trail is immutable (state entries are append-only)
 
 3. **Federation-Ready**
-   - Multiple login servers can operate on same channel
-   - Read-after-write consistency via channel state
+   - Multiple login servers can operate on same space
+   - Read-after-write consistency via space state
    - Each server signs with its own private key
 
 4. **Capability-Based Security**
-   - Login server has god mode on its channel (creator privilege)
+   - Login server has god mode on its space (creator privilege)
    - Can delegate read-only access to monitoring tools
    - Fine-grained path-based permissions
 
 5. **Built-In Replication**
-   - If channel server uses Firestore → automatic multi-region replication
-   - If channel server uses SQLite → can sync channel state files
+   - If space server uses Firestore → automatic multi-region replication
+   - If space server uses SQLite → can sync space state files
    - State is portable across deployments
 
 6. **Privacy-Preserving**
-   - Channel state can be encrypted (future enhancement)
+   - Space state can be encrypted (future enhancement)
    - Server only stores opaque OPRF records (no passwords)
-   - Separation from channel data (different channel ID)
+   - Separation from space data (different space ID)
 
 ### Querying Users
 
-Since channels don't have SQL-style indexing, we use two strategies:
+Since spaces don't have SQL-style indexing, we use two strategies:
 
 **1. Direct Lookup (O(1))**
 ```python
@@ -610,7 +610,7 @@ user = await store.get_user("alice@example.com")
 **2. List All Users (O(n))**
 ```python
 # List all users under /login/users/ prefix
-users = await client.list_state(channel_id, "login/users/")
+users = await client.list_state(space_id, "login/users/")
 # Returns: ["login/users/alice@example.com", "login/users/bob@example.com", ...]
 ```
 
@@ -618,13 +618,13 @@ users = await client.list_state(channel_id, "login/users/")
 ```python
 async def get_user_by_id(user_id: str) -> Optional[Dict]:
     """Find user by user_id (requires scanning all users)"""
-    users = await client.list_state(channel_id, "login/users/")
+    users = await client.list_state(space_id, "login/users/")
     for user_path in users:
-        # Skip nested paths (wrapped_secret, channel_keys)
+        # Skip nested paths (wrapped_secret, space_keys)
         if user_path.count('/') > 3:
             continue
 
-        state = await client.get_state(channel_id, user_path)
+        state = await client.get_state(space_id, user_path)
         user_data = json.loads(state["data"])
         if user_data["user_id"] == user_id:
             return user_data
@@ -638,8 +638,8 @@ async def get_user_by_id(user_id: str) -> Optional[Dict]:
 If you already have a SQL database, migration is straightforward:
 
 ```python
-async def migrate_from_sql_to_channel():
-    """Migrate existing SQL users to channel state"""
+async def migrate_from_sql_to_space():
+    """Migrate existing SQL users to space state"""
     sql_users = db.execute("SELECT * FROM login_users")
 
     for sql_user in sql_users:
@@ -660,12 +660,12 @@ async def migrate_from_sql_to_channel():
             "algorithm": sql_user["wrapping_algorithm"]
         })
 
-        # Store channel keys
-        channel_keys = json.loads(sql_user["encrypted_channel_keys"])
-        await store.store_channel_keys(sql_user["username"], channel_keys)
+        # Store space keys
+        space_keys = json.loads(sql_user["encrypted_space_keys"])
+        await store.store_space_keys(sql_user["username"], space_keys)
 ```
 
-### Rate Limiting with Channel State
+### Rate Limiting with Space State
 
 Rate limiting can be:
 
@@ -674,7 +674,7 @@ Rate limiting can be:
 - Lost on server restart (acceptable for rate limits)
 - Use Python dict: `rate_limits[username] = {failed_attempts, locked_until}`
 
-**Option B: Persistent (channel state)**
+**Option B: Persistent (space state)**
 - Survives restarts
 - Shared across multiple login servers
 - Slightly slower (network round-trip)
@@ -682,7 +682,7 @@ Rate limiting can be:
 **Hybrid Approach:**
 ```python
 class RateLimiter:
-    def __init__(self, store: ChannelBasedLoginStore):
+    def __init__(self, store: SpaceBasedLoginStore):
         self.store = store
         self.cache = {}  # In-memory cache
 
@@ -691,9 +691,9 @@ class RateLimiter:
         if username in self.cache:
             limit_data = self.cache[username]
         else:
-            # Fetch from channel state
+            # Fetch from space state
             path = f"login/rate_limit/{username}"
-            state = await self.store.client.get_state(self.store.channel_id, path)
+            state = await self.store.client.get_state(self.store.space_id, path)
             limit_data = json.loads(state["data"]) if state else {"failed_attempts": 0}
             self.cache[username] = limit_data
 
@@ -718,7 +718,7 @@ class RateLimiter:
 
         self.cache[username] = limit_data
 
-        # Persist to channel state (async, non-blocking)
+        # Persist to space state (async, non-blocking)
         asyncio.create_task(self._persist_rate_limit(username, limit_data))
 ```
 
@@ -755,8 +755,8 @@ class RateLimiter:
     "ciphertext": "base64-ciphertext",
     "algorithm": "AES-256-GCM"
   },
-  "encrypted_channel_keys": {
-    "C_channel1": {"nonce": "...", "ciphertext": "..."}
+  "encrypted_space_keys": {
+    "C_space1": {"nonce": "...", "ciphertext": "..."}
   }
 }
 ```
@@ -776,7 +776,7 @@ class RateLimiter:
   "login_response": "base64-opaque-response",
   "user_id": "U_abc123...",
   "wrapped_master_secret": {"nonce": "...", "ciphertext": "..."},
-  "encrypted_channel_keys": {...}
+  "encrypted_space_keys": {...}
 }
 ```
 
@@ -870,7 +870,7 @@ The combination of **opaque-ke** (backend) and **serenitykit/opaque** (frontend)
 
 ### Backend (Login Server)
 - [ ] Install `opaque-ke` Rust library (or Python bindings)
-- [ ] Create channel-based storage infrastructure
+- [ ] Create space-based storage infrastructure
 - [ ] Implement registration endpoints
 - [ ] Implement login endpoints
 - [ ] Implement password change endpoints
@@ -887,7 +887,7 @@ The combination of **opaque-ke** (backend) and **serenitykit/opaque** (frontend)
 - [ ] Implement password change flow
 - [ ] Implement key derivation (HKDF)
 - [ ] Implement key wrapping (AES-GCM)
-- [ ] Implement channel key encryption (AES-256-GCM)
+- [ ] Implement space key encryption (AES-256-GCM)
 - [ ] Implement secure key storage (OS keychain)
 - [ ] Implement password validation (entropy + HIBP check)
 - [ ] Write unit tests
@@ -908,7 +908,7 @@ Password Change:
 Old Password → Old export_key → Old auth_seed → Old Ed25519 keypair → Old user_id (U_abc)
 New Password → New export_key → New auth_seed → New Ed25519 keypair → New user_id (U_xyz)
 
-Result: Different user_id → Lost channel memberships → Need re-invitation ❌
+Result: Different user_id → Lost space memberships → Need re-invitation ❌
 ```
 
 ### With Key Wrapping (This Design)
@@ -921,7 +921,7 @@ Password Change:
 Old Password → Old KWK → Unwrap(master_secret)
 New Password → New KWK → Re-wrap(SAME master_secret)
 
-Result: SAME user_id → Channel memberships preserved → No re-invitation ✅
+Result: SAME user_id → Space memberships preserved → No re-invitation ✅
 ```
 
 ## Future Enhancements
@@ -938,10 +938,10 @@ Result: SAME user_id → Channel memberships preserved → No re-invitation ✅
 
 ### Key Rotation Policy
 - Configurable password expiry (e.g., 90 days for high-security deployments)
-- Automated re-encryption of channel keys on rotation
+- Automated re-encryption of space keys on rotation
 - Audit trail of all password changes
 
 ### Federated Deployment
 - Multiple organizations run separate login servers
-- Channel server accepts Ed25519 signatures from any federation member
-- Privacy: Channel server never sees passwords, only public keys
+- Space server accepts Ed25519 signatures from any federation member
+- Privacy: Space server never sees passwords, only public keys

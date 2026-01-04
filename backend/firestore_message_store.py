@@ -34,7 +34,7 @@ class FirestoreMessageStore(MessageStore):
 
     def add_message(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         message_hash: str,
         prev_hash: Optional[str],
@@ -52,7 +52,7 @@ class FirestoreMessageStore(MessageStore):
         batch = self.db.batch()
 
         # Add message document
-        msg_ref = self.db.collection('channels').document(channel_id) \
+        msg_ref = self.db.collection('spaces').document(space_id) \
                         .collection('topics').document(topic_id) \
                         .collection('messages').document(message_hash)
 
@@ -66,7 +66,7 @@ class FirestoreMessageStore(MessageStore):
         })
 
         # Update chain head in topic document
-        topic_ref = self.db.collection('channels').document(channel_id) \
+        topic_ref = self.db.collection('spaces').document(space_id) \
                           .collection('topics').document(topic_id)
 
         batch.set(topic_ref, {
@@ -79,7 +79,7 @@ class FirestoreMessageStore(MessageStore):
 
     def get_messages(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         from_ts: Optional[int] = None,
         to_ts: Optional[int] = None,
@@ -91,7 +91,7 @@ class FirestoreMessageStore(MessageStore):
         Uses indexed queries on server_timestamp for efficient retrieval.
         Results are returned in chronological order.
         """
-        query = self.db.collection('channels').document(channel_id) \
+        query = self.db.collection('spaces').document(space_id) \
                       .collection('topics').document(topic_id) \
                       .collection('messages') \
                       .order_by('server_timestamp')
@@ -123,7 +123,7 @@ class FirestoreMessageStore(MessageStore):
 
     def get_message_by_hash(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str,
         message_hash: str
     ) -> Optional[Dict[str, Any]]:
@@ -133,7 +133,7 @@ class FirestoreMessageStore(MessageStore):
         With topic_id provided, this is a direct document lookup - very fast!
         No index needed, no collection group query required.
         """
-        doc_ref = self.db.collection('channels').document(channel_id) \
+        doc_ref = self.db.collection('spaces').document(space_id) \
                         .collection('topics').document(topic_id) \
                         .collection('messages').document(message_hash)
 
@@ -154,7 +154,7 @@ class FirestoreMessageStore(MessageStore):
 
     def get_chain_head(
         self,
-        channel_id: str,
+        space_id: str,
         topic_id: str
     ) -> Optional[Dict[str, Any]]:
         """
@@ -163,7 +163,7 @@ class FirestoreMessageStore(MessageStore):
         Reads from the topic document which is updated atomically
         with each message addition.
         """
-        topic_ref = self.db.collection('channels').document(channel_id) \
+        topic_ref = self.db.collection('spaces').document(space_id) \
                           .collection('topics').document(topic_id)
 
         doc = topic_ref.get()

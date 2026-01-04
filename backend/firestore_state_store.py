@@ -62,12 +62,12 @@ class FirestoreStateStore(StateStore):
 
     def get_state(
         self,
-        channel_id: str,
+        space_id: str,
         path: str
     ) -> Optional[Dict[str, Any]]:
         """Get state value by path from Firestore"""
         doc_id = self._encode_path(path)
-        doc_ref = self.db.collection('channels').document(channel_id) \
+        doc_ref = self.db.collection('spaces').document(space_id) \
                         .collection('state').document(doc_id)
 
         doc = doc_ref.get()
@@ -85,7 +85,7 @@ class FirestoreStateStore(StateStore):
 
     def set_state(
         self,
-        channel_id: str,
+        space_id: str,
         path: str,
         data: str,
         signature: str,
@@ -94,7 +94,7 @@ class FirestoreStateStore(StateStore):
     ) -> None:
         """Set state value in Firestore (signature required)"""
         doc_id = self._encode_path(path)
-        doc_ref = self.db.collection('channels').document(channel_id) \
+        doc_ref = self.db.collection('spaces').document(space_id) \
                         .collection('state').document(doc_id)
 
         doc_ref.set({
@@ -105,10 +105,10 @@ class FirestoreStateStore(StateStore):
             'signed_at': signed_at
         })
 
-    def delete_state(self, channel_id: str, path: str) -> bool:
+    def delete_state(self, space_id: str, path: str) -> bool:
         """Delete state value from Firestore"""
         doc_id = self._encode_path(path)
-        doc_ref = self.db.collection('channels').document(channel_id) \
+        doc_ref = self.db.collection('spaces').document(space_id) \
                         .collection('state').document(doc_id)
 
         doc = doc_ref.get()
@@ -119,7 +119,7 @@ class FirestoreStateStore(StateStore):
 
     def list_state(
         self,
-        channel_id: str,
+        space_id: str,
         prefix: str
     ) -> List[Dict[str, Any]]:
         """
@@ -128,7 +128,7 @@ class FirestoreStateStore(StateStore):
         Uses Firestore range queries on the 'path' field to efficiently
         filter by prefix and maintain lexicographic ordering.
         """
-        state_ref = self.db.collection('channels').document(channel_id) \
+        state_ref = self.db.collection('spaces').document(space_id) \
                           .collection('state')
 
         if prefix:
@@ -154,9 +154,9 @@ class FirestoreStateStore(StateStore):
 
         return results
 
-    def initialize_tool_usage(self, channel_id: str, tool_id: str) -> None:
+    def initialize_tool_usage(self, space_id: str, tool_id: str) -> None:
         """Initialize tool usage tracking for a use-limited tool."""
-        doc_ref = self.db.collection('channels').document(channel_id) \
+        doc_ref = self.db.collection('spaces').document(space_id) \
                         .collection('tool_usage').document(tool_id)
 
         doc_ref.set({
@@ -164,21 +164,21 @@ class FirestoreStateStore(StateStore):
             'last_used_at': None
         })
 
-    def increment_tool_usage(self, channel_id: str, tool_id: str, timestamp: int) -> int:
+    def increment_tool_usage(self, space_id: str, tool_id: str, timestamp: int) -> int:
         """
         Increment tool use count and return new count using Firestore transaction.
 
-        This is operational metadata (NOT part of channel state).
+        This is operational metadata (NOT part of space state).
 
         Args:
-            channel_id: Channel ID
+            space_id: Space ID
             tool_id: Tool ID (T_*)
             timestamp: Current timestamp in milliseconds
 
         Returns:
             New use count after increment
         """
-        doc_ref = self.db.collection('channels').document(channel_id) \
+        doc_ref = self.db.collection('spaces').document(space_id) \
                         .collection('tool_usage').document(tool_id)
 
         @firestore.transactional
@@ -205,20 +205,20 @@ class FirestoreStateStore(StateStore):
         transaction = self.db.transaction()
         return update_in_transaction(transaction, doc_ref)
 
-    def get_tool_usage(self, channel_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
+    def get_tool_usage(self, space_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
         """
         Get tool usage statistics from Firestore.
 
-        This is operational metadata (NOT part of channel state).
+        This is operational metadata (NOT part of space state).
 
         Args:
-            channel_id: Channel ID
+            space_id: Space ID
             tool_id: Tool ID (T_*)
 
         Returns:
             Dictionary with use_count and last_used_at, or None if not found
         """
-        doc_ref = self.db.collection('channels').document(channel_id) \
+        doc_ref = self.db.collection('spaces').document(space_id) \
                         .collection('tool_usage').document(tool_id)
 
         doc = doc_ref.get()

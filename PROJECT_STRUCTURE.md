@@ -11,7 +11,7 @@ e2ee-messaging/
 │
 ├── backend/                  # Backend implementation
 │   ├── main.py               # FastAPI application entry point
-│   ├── channel.py            # Channel management and API logic
+│   ├── space.py            # Space management and API logic
 │   ├── crypto.py             # Cryptographic utilities (Ed25519, SHA256)
 │   ├── authorization.py      # Capability-based authorization with RBAC
 │   ├── identifiers.py        # Typed identifier utilities
@@ -103,8 +103,8 @@ Or use the convenience script:
 - JWT authentication middleware
 - Request/response validation
 
-**backend/channel.py**
-- Channel management logic
+**backend/space.py**
+- Space management logic
 - State and message operations
 - Authentication (challenge/verify/JWT)
 - Authorization checks via AuthorizationEngine
@@ -131,7 +131,7 @@ Or use the convenience script:
 
 **backend/identifiers.py**
 - Typed identifier encoding/decoding
-- Supports Channel (C_), User (U_), Tool (T_), Message (M_), Blob (B_)
+- Supports Space (C_), User (U_), Tool (T_), Message (M_), Blob (B_)
 - 264-bit format (44-char URL-safe base64)
 - Type validation
 
@@ -184,7 +184,7 @@ Or use the convenience script:
 ### Client Files
 
 **client/example_client.py**
-- Channel bootstrap example
+- Space bootstrap example
 - User join workflow
 - Message posting and retrieval
 - Cryptographic operations
@@ -195,7 +195,7 @@ Or use the convenience script:
 **backend/tests/conftest.py**
 - Shared pytest fixtures (temp_db_path, state_store, crypto, authz, etc.)
 - Keypair fixtures (admin_keypair, user_keypair, tool_keypair)
-- Helper functions (sign_state_entry, sign_and_store_state, set_channel_state)
+- Helper functions (sign_state_entry, sign_and_store_state, set_space_state)
 - Firestore emulator setup
 
 **backend/tests/test_authorization.py**
@@ -269,7 +269,7 @@ Edit `openapi.yaml` first to define the contract, then update `backend/main.py` 
 - Add crypto operations in `backend/crypto.py`
 - Add authorization logic in `backend/authorization.py`
 - Add path validation patterns in `backend/path_validation.py`
-- Wire everything together in `backend/channel.py` and `backend/main.py`
+- Wire everything together in `backend/space.py` and `backend/main.py`
 
 ### 3. Test
 - Add tests to appropriate test file in `backend/tests/`
@@ -344,5 +344,5 @@ This is a reference implementation. Before production use:
 2. Add proper message encryption (AES-GCM)
 3. Build a simple web client
 4. Add multi-device support
-5. Implement channel key rotation
+5. Implement space key rotation
 6. Add forward secrecy (message ratcheting)

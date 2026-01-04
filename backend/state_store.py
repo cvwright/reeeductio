@@ -2,7 +2,7 @@
 State storage abstraction layer for E2EE messaging system
 
 Provides a base StateStore interface and concrete implementations for
-storing channel state in different backends (SQLite, LMDB, DynamoDB, etc.)
+storing space state in different backends (SQLite, LMDB, DynamoDB, etc.)
 """
 
 from abc import ABC, abstractmethod
@@ -28,14 +28,14 @@ class StateStore(ABC):
     @abstractmethod
     def get_state(
         self,
-        channel_id: str,
+        space_id: str,
         path: str
     ) -> Optional[Dict[str, Any]]:
         """
         Get state value by path
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             path: State path (e.g., "/state/members/alice")
 
         Returns:
@@ -52,7 +52,7 @@ class StateStore(ABC):
     @abstractmethod
     def set_state(
         self,
-        channel_id: str,
+        space_id: str,
         path: str,
         data: str,
         signature: str,
@@ -63,7 +63,7 @@ class StateStore(ABC):
         Set state value (create or update)
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             path: State path
             data: State data (base64-encoded string)
             signature: Ed25519 signature over (path + data + signed_at)
@@ -73,12 +73,12 @@ class StateStore(ABC):
         pass
 
     @abstractmethod
-    def delete_state(self, channel_id: str, path: str) -> bool:
+    def delete_state(self, space_id: str, path: str) -> bool:
         """
         Delete state value
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             path: State path
 
         Returns:
@@ -89,14 +89,14 @@ class StateStore(ABC):
     @abstractmethod
     def list_state(
         self,
-        channel_id: str,
+        space_id: str,
         prefix: str
     ) -> List[Dict[str, Any]]:
         """
         List all state entries matching a prefix (must be ordered by path)
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             prefix: Path prefix to match (e.g., "/state/members/")
 
         Returns:
@@ -111,7 +111,7 @@ class StateStore(ABC):
         pass
 
     @abstractmethod
-    def initialize_tool_usage(self, channel_id: str, tool_id: str) -> None:
+    def initialize_tool_usage(self, space_id: str, tool_id: str) -> None:
         """
         Initialize tool usage tracking for a use-limited tool.
 
@@ -119,24 +119,24 @@ class StateStore(ABC):
         Creates a row with use_count=0 so that increment_tool_usage can always UPDATE.
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             tool_id: Tool identifier (T_*)
         """
         pass
 
     @abstractmethod
-    def increment_tool_usage(self, channel_id: str, tool_id: str, timestamp: int) -> int:
+    def increment_tool_usage(self, space_id: str, tool_id: str, timestamp: int) -> int:
         """
         Increment tool use count and return new count.
 
-        This is operational metadata (NOT part of channel state).
+        This is operational metadata (NOT part of space state).
         Used to track and enforce use_limit for tools.
 
         NOTE: Assumes initialize_tool_usage has been called for this tool.
         Will only UPDATE (never INSERT).
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             tool_id: Tool identifier (T_*)
             timestamp: Current timestamp in milliseconds
 
@@ -146,14 +146,14 @@ class StateStore(ABC):
         pass
 
     @abstractmethod
-    def get_tool_usage(self, channel_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
+    def get_tool_usage(self, space_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
         """
         Get tool usage statistics.
 
-        This is operational metadata (NOT part of channel state).
+        This is operational metadata (NOT part of space state).
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             tool_id: Tool identifier (T_*)
 
         Returns:

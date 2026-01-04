@@ -2,7 +2,7 @@
 
 Reeeductio's authorization could be called a "half capability" system.  It uses capability objects to store user's rights in the system, but it is not a strict capability system.  It does have ambient authority because clients are not required to present a capability along with each request.  So it does not prevent confused deputies, but the usability improvement seems to be worth it.
 
-The basic idea is to use some sub-tree of the channel's state space to store authentication and authorization data.  In general the channel state is very flexible and can be used by the application in almost any way, because the server does not need to understand it.  But the /auth subtree is special because the server does use it to decide how to authorize requests.
+The basic idea is to use some sub-tree of the space's state space to store authentication and authorization data.  In general the space state is very flexible and can be used by the application in almost any way, because the server does not need to understand it.  But the /auth subtree is special because the server does use it to decide how to authorize requests.
 
 ## The Basic Scheme
 
@@ -18,11 +18,11 @@ Each capability contains
 * The public key that granted the capability
 
 A new capability may be written to the state IFF
-1. The grantor public key is also a user in the channel, or the channel creator
+1. The grantor public key is also a user in the space, or the space creator
 2. The grantor public key has at least as much power as is being granted (ie, a more powerful operation on a prefix of the granted prefix)
 3. The grantor public key is authorized to write or create under the prefix /auth/users/{u_p_k}/rights/
 
-The channel creator key is the super-admin and is always implicitly authorized to perform any action in the channel.
+The space creator key is the super-admin and is always implicitly authorized to perform any action in the space.
 
 The set of operations for a capability includes:
 - "write"
@@ -57,17 +57,17 @@ It would be nice if we could give out limited "API key" style keys.
 
 One motivating example is moderation.  When a user gets banned it is often better if the ban comes from a generic "mod" account rather than from an individual moderator.  This can reduce drama because it reduces the temptation for the banned user to lash out at the individual moderator.
 
-Another example is for "bot" accounts where I want to give limited access to some computer, not a human.  Maybe the bot sends notifications from some other service, eg Github.  Or maybe one day I will finally build my encrypted security camera; then the camera needs to upload photos and videos, but it doesn't need to do anything else in the channel.
+Another example is for "bot" accounts where I want to give limited access to some computer, not a human.  Maybe the bot sends notifications from some other service, eg Github.  Or maybe one day I will finally build my encrypted security camera; then the camera needs to upload photos and videos, but it doesn't need to do anything else in the space.
 
-The big motivating example is letting users join the channel from a text message.  This is *almost* like joining from a QR code.  In either case, we want to create some special key that can create new users in the room.  But we *do not* want the key itself to be usable as a user key.  We don't want it posting messages, and we definitely don't want it downloading and decrypting everything that's already in the room.  The naive version would be to include the symmetric root key in the invite / QR code.  But then if we are not careful, if the join key is a full user key, then anyone who learns the invite can connect to the channel as the join key, download all of our messages (and our state) and decrypt everything, all without ever being detected.  So we definitely don't want that.  It seems the solution is to make the join key *not* a full regular user in the channel.  So then a new user (either legitimate or a bad guy who saw the invite) must create a new user key in the channel WHERE WE CAN SEE THEM, and only then can they download our data and use the symmetric root to decrypt it.  An incremental improvement above and beyond that would be to encrypt the symmetric root with a key-wrap key (KWK) and save it somewhere in the state.  We include the KWK in the invite instead of the root key.  Then the new users can connect, download the wrapped key, and unwrap with the KWK to recover the root secret.  It doesn't prevent a malicious chat platform from stealing all of our stuff, but it does prevent them from doing it without our notice.
+The big motivating example is letting users join the space from a text message.  This is *almost* like joining from a QR code.  In either case, we want to create some special key that can create new users in the room.  But we *do not* want the key itself to be usable as a user key.  We don't want it posting messages, and we definitely don't want it downloading and decrypting everything that's already in the room.  The naive version would be to include the symmetric root key in the invite / QR code.  But then if we are not careful, if the join key is a full user key, then anyone who learns the invite can connect to the space as the join key, download all of our messages (and our state) and decrypt everything, all without ever being detected.  So we definitely don't want that.  It seems the solution is to make the join key *not* a full regular user in the space.  So then a new user (either legitimate or a bad guy who saw the invite) must create a new user key in the space WHERE WE CAN SEE THEM, and only then can they download our data and use the symmetric root to decrypt it.  An incremental improvement above and beyond that would be to encrypt the symmetric root with a key-wrap key (KWK) and save it somewhere in the state.  We include the KWK in the invite instead of the root key.  Then the new users can connect, download the wrapped key, and unwrap with the KWK to recover the root secret.  It doesn't prevent a malicious chat platform from stealing all of our stuff, but it does prevent them from doing it without our notice.
 
 I think the critical factor for tools must be that a tool has different authorization requirements from those of a user.
 * A tool can create users and tools, and can grant rights.  Unlike a user, it is not required to have all of the powers that it itself is granting.  So for example we can have a tool that can create new users, and can grant them the "user" role even though it does not have that role itself.  It can only create users (and grant the role if we want to make it explicit).
 * A tool does not inherit any rights other than those it is explicitly granted in the state
 
-As an extra step, it would be cool if each tool could have a limited number of uses.  (Like in Minecraft, ha!) This requires the channel to keep track of the use count for each tool, but oh well that's not *too* much extra work.  All we need is one more table in the database.
+As an extra step, it would be cool if each tool could have a limited number of uses.  (Like in Minecraft, ha!) This requires the space to keep track of the use count for each tool, but oh well that's not *too* much extra work.  All we need is one more table in the database.
 
-Tools are stored in the channel state just like users, but under a different prefix:
+Tools are stored in the space state just like users, but under a different prefix:
 * Tool metadata: `auth/tools/{tool_public_key}`
 * Tool capabilities: `auth/tools/{tool_public_key}/rights/{cap_id}`
 

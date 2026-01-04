@@ -1,14 +1,14 @@
 """
-Integration tests for path validation in channel operations
+Integration tests for path validation in space operations
 """
 
 import pytest
-from channel import Channel
+from space import Space
 from sqlite_state_store import SqliteStateStore
 from sqlite_message_store import SqliteMessageStore
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
-from identifiers import encode_channel_id, encode_user_id
+from identifiers import encode_space_id, encode_user_id
 import base64
 import json
 
@@ -21,33 +21,33 @@ sys.path.insert(0, str(Path(__file__).parent))
 import conftest
 sign_state_entry = conftest.sign_state_entry
 sign_and_store_state = conftest.sign_and_store_state
-set_channel_state = conftest.set_channel_state
+set_space_state = conftest.set_space_state
 
 
 
 @pytest.fixture
-def channel(temp_db_path, admin_keypair):
-    """Create a test channel"""
+def space(temp_db_path, admin_keypair):
+    """Create a test space"""
     state_store = SqliteStateStore(temp_db_path)
     message_store = SqliteMessageStore(temp_db_path)
 
-    channel_id = admin_keypair['channel_id']
-    channel = Channel(
-        channel_id=channel_id,
+    space_id = admin_keypair['space_id']
+    space = Space(
+        space_id=space_id,
         state_store=state_store,
         message_store=message_store,
         blob_store=None,
         jwt_secret="test_secret_key_for_testing"
     )
 
-    return channel
+    return space
 
 
 @pytest.fixture
-def admin_token(channel, admin_keypair):
+def admin_token(space, admin_keypair):
     """Get JWT token for admin"""
     # Create challenge
-    challenge_response = channel.create_challenge(admin_keypair['user_id'])
+    challenge_response = space.create_challenge(admin_keypair['user_id'])
     challenge = challenge_response['challenge']
 
     # Sign challenge (sign the base64 string encoded as UTF-8)
@@ -56,21 +56,21 @@ def admin_token(channel, admin_keypair):
     signature_b64 = base64.b64encode(signature).decode()
 
     # Verify challenge
-    channel.verify_challenge(
+    space.verify_challenge(
         admin_keypair['user_id'],
         challenge,
         signature_b64
     )
 
     # Create and return JWT token
-    token_response = channel.create_jwt(admin_keypair['user_id'])
+    token_response = space.create_jwt(admin_keypair['user_id'])
     return token_response['token']
 
 
 class TestStatePathValidation:
     """Test path validation in state operations"""
 
-    def test_valid_state_paths_accepted(self, channel, admin_token, admin_keypair):
+    def test_valid_state_paths_accepted(self, space, admin_token, admin_keypair):
         """Test that valid paths are accepted"""
         valid_paths = [
             "profiles/alice",
@@ -83,9 +83,9 @@ class TestStatePathValidation:
         for path in valid_paths:
             data = {"data": "test"}
             # Should not raise
-            set_channel_state(channel, path, data, admin_token, admin_keypair)
+            set_space_state(space, path, data, admin_token, admin_keypair)
 
-    def test_wildcard_injection_prevented(self, channel, admin_token, admin_keypair):
+    def test_wildcard_injection_prevented(self, space, admin_token, admin_keypair):
         """Test that wildcards cannot be injected in user paths"""
         invalid_paths = [
             "profiles/{self}",
@@ -96,10 +96,10 @@ class TestStatePathValidation:
         for path in invalid_paths:
             data = {"data": "something"}
             with pytest.raises(ValueError) as exc_info:
-                set_channel_state(channel, path, data, admin_token, admin_keypair)
+                set_space_state(space, path, data, admin_token, admin_keypair)
             assert "reserved wildcard" in str(exc_info.value).lower()
 
-    def test_braced_expressions_prevented(self, channel, admin_token, admin_keypair):
+    def test_braced_expressions_prevented(self, space, admin_token, admin_keypair):
         """Test that braced expressions cannot be used in paths"""
         invalid_paths = [
             "users/{custom}",
@@ -110,10 +110,10 @@ class TestStatePathValidation:
         for path in invalid_paths:
             data = {"blah": "blah"}
             with pytest.raises(ValueError) as exc_info:
-                set_channel_state(channel, path, data, admin_token, admin_keypair)
+                set_space_state(space, path, data, admin_token, admin_keypair)
             assert "braces" in str(exc_info.value).lower() or "invalid" in str(exc_info.value).lower()
 
-    def test_special_characters_prevented(self, channel, admin_token, admin_keypair):
+    def test_special_characters_prevented(self, space, admin_token, admin_keypair):
         """Test that special characters are rejected"""
         invalid_paths = [
             "my file",           # Space
@@ -125,10 +125,10 @@ class TestStatePathValidation:
         for path in invalid_paths:
             data = {"blah": "blah"}
             with pytest.raises(ValueError) as exc_info:
-                set_channel_state(channel, path, data, admin_token, admin_keypair)
+                set_space_state(space, path, data, admin_token, admin_keypair)
             assert "invalid" in str(exc_info.value).lower()
 
-    def test_dots_allowed_in_paths(self, channel, admin_token, admin_keypair):
+    def test_dots_allowed_in_paths(self, space, admin_token, admin_keypair):
         """Test that dots are allowed for file extensions and versioning"""
         valid_paths = [
             "files/photo.jpg",
@@ -139,43 +139,43 @@ class TestStatePathValidation:
 
         for path in valid_paths:
             data = {"blah": "blah"}
-            set_channel_state(channel, path, data, admin_token, admin_keypair)
+            set_space_state(space, path, data, admin_token, admin_keypair)
 
-    def test_get_state_validates_path(self, channel, admin_token, admin_keypair):
+    def test_get_state_validates_path(self, space, admin_token, admin_keypair):
         """Test that get_state also validates paths"""
         # Valid path works
         valid_path = "test/data"
         data = {"test": "data"}
-        set_channel_state(channel, valid_path, data, admin_token, admin_keypair)
+        set_space_state(space, valid_path, data, admin_token, admin_keypair)
 
-        result = channel.get_state(valid_path, admin_token)
+        result = space.get_state(valid_path, admin_token)
         assert result is not None
 
         # Invalid path rejected
         with pytest.raises(ValueError) as exc_info:
-            channel.get_state("test/{self}", admin_token)
+            space.get_state("test/{self}", admin_token)
         assert "invalid" in str(exc_info.value).lower()
 
-    def test_delete_state_validates_path(self, channel, admin_token, admin_keypair):
+    def test_delete_state_validates_path(self, space, admin_token, admin_keypair):
         """Test that delete_state also validates paths"""
         # Create valid state
         valid_path = "test/data"
         data = {"test": "data"}
-        set_channel_state(channel, valid_path, data, admin_token, admin_keypair)
+        set_space_state(space, valid_path, data, admin_token, admin_keypair)
 
         # Valid deletion works
-        channel.delete_state(valid_path, admin_token)
+        space.delete_state(valid_path, admin_token)
 
         # Invalid path rejected
         with pytest.raises(ValueError) as exc_info:
-            channel.delete_state("test/{any}", admin_token)
+            space.delete_state("test/{any}", admin_token)
         assert "invalid" in str(exc_info.value).lower()
 
 
 class TestCapabilityPathValidation:
     """Test path validation for capability grants"""
 
-    def test_capability_with_valid_wildcards_accepted(self, channel, admin_keypair, admin_token, crypto):
+    def test_capability_with_valid_wildcards_accepted(self, space, admin_keypair, admin_token, crypto):
         """Test that capabilities with valid wildcards are accepted"""
 
         # Create capability with {self} wildcard
@@ -186,9 +186,9 @@ class TestCapabilityPathValidation:
         cap_path = f"auth/users/{admin_keypair['user_id']}/rights/cap_001"
 
         # Store capability - should not raise with valid wildcard
-        set_channel_state(channel, cap_path, capability, admin_token, admin_keypair)
+        set_space_state(space, cap_path, capability, admin_token, admin_keypair)
 
-    def test_capability_with_unknown_wildcard_rejected(self, channel, admin_keypair, admin_token, crypto):
+    def test_capability_with_unknown_wildcard_rejected(self, space, admin_keypair, admin_token, crypto):
         """Test that capabilities with unknown wildcards are rejected"""
 
         # Create capability with unknown {custom} wildcard
@@ -202,5 +202,5 @@ class TestCapabilityPathValidation:
         cap_path = f"auth/users/{secrets.token_hex(16)}/rights/cap_002"
 
         with pytest.raises(ValueError) as exc_info:
-            set_channel_state(channel, cap_path, capability, admin_token, admin_keypair)
+            set_space_state(space, cap_path, capability, admin_token, admin_keypair)
         assert "invalid capability grant" in str(exc_info.value).lower()

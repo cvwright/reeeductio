@@ -1,7 +1,7 @@
 """
 SQLite implementation of StateStore
 
-Stores channel state in a SQLite database. All state data is stored
+Stores space state in a SQLite database. All state data is stored
 as base64-encoded strings; interpretation is context-dependent.
 """
 
@@ -12,7 +12,7 @@ from lru_cache import LRUCache
 
 
 class SqliteStateStore(SqlStateStore):
-    """Store channel state in SQLite database"""
+    """Store space state in SQLite database"""
 
     def __init__(self, db_path: str, cache_size: int = 1000):
         """

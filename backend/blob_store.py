@@ -11,9 +11,9 @@ from identifiers import decode_identifier, IdType
 
 
 class BlobReference:
-    """A single reference to a blob from a channel/user"""
-    def __init__(self, channel_id: str, uploaded_by: str, uploaded_at: int):
-        self.channel_id = channel_id
+    """A single reference to a blob from a space/user"""
+    def __init__(self, space_id: str, uploaded_by: str, uploaded_at: int):
+        self.space_id = space_id
         self.uploaded_by = uploaded_by
         self.uploaded_at = uploaded_at
 
@@ -23,11 +23,11 @@ class BlobMetadata:
     def __init__(self, references: List[BlobReference]):
         self.references = references
 
-    def add_reference(self, channel_id: str, uploaded_by: str, uploaded_at: int):
+    def add_reference(self, space_id: str, uploaded_by: str, uploaded_at: int):
         """Add a new reference to this blob"""
-        self.references.append(BlobReference(channel_id, uploaded_by, uploaded_at))
+        self.references.append(BlobReference(space_id, uploaded_by, uploaded_at))
 
-    def remove_reference(self, channel_id: str, uploaded_by: str) -> bool:
+    def remove_reference(self, space_id: str, uploaded_by: str) -> bool:
         """
         Remove a reference from this blob.
 
@@ -35,17 +35,17 @@ class BlobMetadata:
             True if blob should be deleted (no references remain), False otherwise
         """
         self.references = [r for r in self.references
-                          if not (r.channel_id == channel_id and r.uploaded_by == uploaded_by)]
+                          if not (r.space_id == space_id and r.uploaded_by == uploaded_by)]
         return len(self.references) == 0
 
-    def has_reference(self, channel_id: str) -> bool:
-        """Check if channel has any reference to this blob"""
-        return any(r.channel_id == channel_id for r in self.references)
+    def has_reference(self, space_id: str) -> bool:
+        """Check if space has any reference to this blob"""
+        return any(r.space_id == space_id for r in self.references)
 
-    def get_reference(self, channel_id: str, uploaded_by: str) -> Optional[BlobReference]:
+    def get_reference(self, space_id: str, uploaded_by: str) -> Optional[BlobReference]:
         """Get a specific reference if it exists"""
         for ref in self.references:
-            if ref.channel_id == channel_id and ref.uploaded_by == uploaded_by:
+            if ref.space_id == space_id and ref.uploaded_by == uploaded_by:
                 return ref
         return None
 
@@ -73,12 +73,12 @@ class BlobStore(ABC):
                 f"blob_id must be BLOB type, got {tid.id_type.name}"
             )
 
-    def _get_reference_key(self, channel_id: str, uploaded_by: str) -> str:
+    def _get_reference_key(self, space_id: str, uploaded_by: str) -> str:
         """Generate a unique key for a reference"""
-        return f"{channel_id}:{uploaded_by}"
+        return f"{space_id}:{uploaded_by}"
 
     @abstractmethod
-    def add_blob(self, blob_id: str, data: bytes, channel_id: str, uploaded_by: str) -> None:
+    def add_blob(self, blob_id: str, data: bytes, space_id: str, uploaded_by: str) -> None:
         """
         Store a blob with reference counting.
 
@@ -88,7 +88,7 @@ class BlobStore(ABC):
         Args:
             blob_id: Content-addressed identifier for the blob
             data: Raw binary blob data (typically encrypted)
-            channel_id: ID of the channel this blob belongs to
+            space_id: ID of the space this blob belongs to
             uploaded_by: Public key of the user who uploaded this blob
         """
         pass
@@ -120,13 +120,13 @@ class BlobStore(ABC):
         pass
 
     @abstractmethod
-    def remove_blob_reference(self, blob_id: str, channel_id: str, uploaded_by: str) -> bool:
+    def remove_blob_reference(self, blob_id: str, space_id: str, uploaded_by: str) -> bool:
         """
         Remove a reference to a blob. Deletes the blob content if no references remain.
 
         Args:
             blob_id: Content-addressed identifier for the blob
-            channel_id: ID of the channel removing the reference
+            space_id: ID of the space removing the reference
             uploaded_by: Public key of the user who uploaded this reference
 
         Returns:

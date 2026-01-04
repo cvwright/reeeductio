@@ -53,7 +53,7 @@ class AuthorizationEngine:
 
     def _verify_state_entry_signature(
         self,
-        channel_id: str,
+        space_id: str,
         state_entry: Dict[str, Any]
     ) -> bool:
         """
@@ -63,7 +63,7 @@ class AuthorizationEngine:
         the state entry's signature is valid.
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             state_entry: State entry dict with path, data, signature, signed_by, signed_at
 
         Returns:
@@ -74,9 +74,9 @@ class AuthorizationEngine:
             return False
 
         try:
-            # Reconstruct the message that was signed: channel_id|path|data|signed_at
+            # Reconstruct the message that was signed: space_id|path|data|signed_at
             message_to_sign = '|'.join([
-                channel_id,
+                space_id,
                 state_entry["path"],
                 state_entry["data"],
                 str(state_entry["signed_at"])
@@ -92,7 +92,7 @@ class AuthorizationEngine:
 
     def check_permission(
         self,
-        channel_id: str,
+        space_id: str,
         member_id: str,
         operation: str,
         state_path: str
@@ -104,7 +104,7 @@ class AuthorizationEngine:
         State entry is only loaded when a matching capability has must_be_owner=true.
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             member_id: User or tool typed identifier
             operation: 'read', 'create', 'modify', 'delete', or 'write'
             state_path: State path being accessed
@@ -115,34 +115,34 @@ class AuthorizationEngine:
         # Tools have NO ambient authority - they can only use explicit capabilities
         if self._is_tool(member_id):
             # Load tool capabilities only
-            capabilities = self._load_tool_capabilities(channel_id, member_id)
+            capabilities = self._load_tool_capabilities(space_id, member_id)
 
             # Check if any capability grants permission (with ownership check)
             for cap in capabilities:
                 if self._check_capability_with_ownership(
-                    cap, operation, state_path, member_id, channel_id
+                    cap, operation, state_path, member_id, space_id
                 ):
                     return True
 
             return False
 
-        # For users: Channel creator has god mode
-        # Compare underlying public keys (channel and user IDs have different type prefixes)
+        # For users: Space creator has god mode
+        # Compare underlying public keys (space and user IDs have different type prefixes)
         try:
-            channel_pubkey = extract_public_key(channel_id)
+            space_pubkey = extract_public_key(space_id)
             user_pubkey = extract_public_key(member_id)
-            if channel_pubkey == user_pubkey:
+            if space_pubkey == user_pubkey:
                 return True
         except ValueError:
             # If extraction fails, fall through to capability check
             pass
 
         # Load direct capabilities for this user
-        capabilities = self._load_user_capabilities(channel_id, member_id)
+        capabilities = self._load_user_capabilities(space_id, member_id)
         print(f"Found {len(capabilities)} capabilities for user {member_id}")
 
         # Load capabilities inherited from roles
-        role_capabilities = self._load_role_capabilities(channel_id, member_id)
+        role_capabilities = self._load_role_capabilities(space_id, member_id)
         print(f"Found {len(role_capabilities)} capabilities for user {member_id}")
 
         # Combine all capabilities
@@ -151,7 +151,7 @@ class AuthorizationEngine:
         # Check if any capability grants permission (with ownership check)
         for cap in all_capabilities:
             if self._check_capability_with_ownership(
-                cap, operation, state_path, member_id, channel_id
+                cap, operation, state_path, member_id, space_id
             ):
                 return True
 
@@ -163,7 +163,7 @@ class AuthorizationEngine:
         operation: str,
         state_path: str,
         member_id: str,
-        channel_id: str
+        space_id: str
     ) -> bool:
         """
         Check if a capability grants permission, with lazy ownership verification.
@@ -178,7 +178,7 @@ class AuthorizationEngine:
             operation: Operation being performed
             state_path: State path being accessed
             member_id: User or tool identifier
-            channel_id: Channel identifier (for state lookup)
+            space_id: Space identifier (for state lookup)
 
         Returns:
             True if capability grants permission
@@ -202,7 +202,7 @@ class AuthorizationEngine:
 
         # For other operations, verify ownership via state entry lookup
         # This is the lazy loading - only happens when needed
-        state_entry = self.state_store.get_state(channel_id, state_path)
+        state_entry = self.state_store.get_state(space_id, state_path)
 
         if not state_entry:
             # No entry exists, so you can't own it
@@ -213,7 +213,7 @@ class AuthorizationEngine:
     
     def _load_user_capabilities(
         self,
-        channel_id: str,
+        space_id: str,
         user_id: str
     ) -> List[Dict[str, Any]]:
         """
@@ -225,13 +225,13 @@ class AuthorizationEngine:
         Data is base64-encoded JSON, so we need to decode it.
         """
         prefix = f"auth/users/{user_id}/rights"
-        capability_states = self.state_store.list_state(channel_id, prefix)
+        capability_states = self.state_store.list_state(space_id, prefix)
         print(f"Found {len(capability_states)} rights state entries for user {user_id}")
 
         capabilities = []
         for state in capability_states:
             # Verify state entry signature first
-            if not self._verify_state_entry_signature(channel_id, state):
+            if not self._verify_state_entry_signature(space_id, state):
                 print(f"Invalid state entry signature for {state.get('path', 'unknown')}")
                 continue
 
@@ -249,7 +249,7 @@ class AuthorizationEngine:
 
     def _load_role_capabilities(
         self,
-        channel_id: str,
+        space_id: str,
         user_id: str
     ) -> List[Dict[str, Any]]:
         """
@@ -262,7 +262,7 @@ class AuthorizationEngine:
         4. Return combined list of all role capabilities
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             user_id: User's typed identifier
 
         Returns:
@@ -270,13 +270,13 @@ class AuthorizationEngine:
         """
         # Load user's role grants
         role_prefix = f"auth/users/{user_id}/roles/"
-        role_grants = self.state_store.list_state(channel_id, role_prefix)
+        role_grants = self.state_store.list_state(space_id, role_prefix)
 
         all_role_capabilities = []
 
         for role_grant_state in role_grants:
             # Verify role grant state entry signature first
-            if not self._verify_state_entry_signature(channel_id, role_grant_state):
+            if not self._verify_state_entry_signature(space_id, role_grant_state):
                 print(f"Invalid state entry signature for role grant {role_grant_state.get('path', 'unknown')}")
                 continue
 
@@ -296,11 +296,11 @@ class AuthorizationEngine:
 
                 # Load capabilities for this role
                 role_cap_prefix = f"auth/roles/{role_id}/rights/"
-                role_cap_states = self.state_store.list_state(channel_id, role_cap_prefix)
+                role_cap_states = self.state_store.list_state(space_id, role_cap_prefix)
 
                 for cap_state in role_cap_states:
                     # Verify role capability state entry signature
-                    if not self._verify_state_entry_signature(channel_id, cap_state):
+                    if not self._verify_state_entry_signature(space_id, cap_state):
                         print(f"Invalid state entry signature for role capability {cap_state.get('path', 'unknown')}")
                         continue
 
@@ -320,7 +320,7 @@ class AuthorizationEngine:
 
     def _load_tool_capabilities(
         self,
-        channel_id: str,
+        space_id: str,
         tool_public_key: str
     ) -> List[Dict[str, Any]]:
         """
@@ -330,19 +330,19 @@ class AuthorizationEngine:
         explicitly granted in auth/tools/{tool_id}/rights/
 
         Args:
-            channel_id: Channel identifier
+            space_id: Space identifier
             tool_public_key: Tool's typed identifier
 
         Returns:
             List of capability dictionaries
         """
         prefix = f"auth/tools/{tool_public_key}/rights/"
-        capability_states = self.state_store.list_state(channel_id, prefix)
+        capability_states = self.state_store.list_state(space_id, prefix)
 
         capabilities = []
         for state in capability_states:
             # Verify state entry signature first
-            if not self._verify_state_entry_signature(channel_id, state):
+            if not self._verify_state_entry_signature(space_id, state):
                 print(f"Invalid state entry signature for tool capability {state.get('path', 'unknown')}")
                 continue
 
@@ -533,7 +533,7 @@ class AuthorizationEngine:
     
     def verify_capability_grant(
         self,
-        channel_id: str,
+        space_id: str,
         path: str,
         capability_data: dict,
         granted_by: str
@@ -550,7 +550,7 @@ class AuthorizationEngine:
         This method only validates the capability grant logic.
 
         Args:
-            channel_id: Typed channel identifier
+            space_id: Typed space identifier
             path: State path where capability is being stored
             capability_data: The capability being granted
             granted_by: Typed user identifier or tool identifier of the writer
@@ -559,7 +559,7 @@ class AuthorizationEngine:
             True if grant is valid
         """
         print("Authz: Verifying capability grant")
-        print(f"Channel = {channel_id}")
+        print(f"Space = {space_id}")
 
         # Validate the capability path pattern
         capability_path = capability_data.get("path", "")
@@ -582,9 +582,9 @@ class AuthorizationEngine:
         subject_id = parts[2]
         print(f"Found subject: {subject_id}")
 
-        # Channel creator can grant anything
+        # Space creator can grant anything
         try:
-            if extract_public_key(granted_by) == extract_public_key(channel_id):
+            if extract_public_key(granted_by) == extract_public_key(space_id):
                 return True
         except Exception:
             return False
@@ -597,7 +597,7 @@ class AuthorizationEngine:
 
         # For users: verify they have superset of the capability they're granting
         # Load granter's capabilities
-        granter_caps = self._load_user_capabilities(channel_id, granted_by)
+        granter_caps = self._load_user_capabilities(space_id, granted_by)
 
         # Check if granter has permission to grant capabilities
         can_grant = False
@@ -628,7 +628,7 @@ class AuthorizationEngine:
 
     def verify_role_grant(
         self,
-        channel_id: str,
+        space_id: str,
         path: str,
         role_grant_data: dict,
         granted_by: str
@@ -637,7 +637,7 @@ class AuthorizationEngine:
         Verify that a role grant is valid
 
         Checks:
-        1. Granter exists (or is channel_id)
+        1. Granter exists (or is space_id)
         2. Role exists
         3. Granter has superset of all capabilities in the role
 
@@ -645,7 +645,7 @@ class AuthorizationEngine:
         This method only validates the role grant logic.
 
         Args:
-            channel_id: Typed channel identifier
+            space_id: Typed space identifier
             path: State path where role grant is being stored
             role_grant_data: The role grant being created
             granted_by: Typed user identifier of granter
@@ -661,22 +661,22 @@ class AuthorizationEngine:
 
         role_id = parts[4]
 
-        # Channel creator can grant anything
-        # Compare the underlying public keys (granter might be U_xxx while channel is C_xxx)
+        # Space creator can grant anything
+        # Compare the underlying public keys (granter might be U_xxx while space is C_xxx)
         try:
-            if extract_public_key(granted_by) == extract_public_key(channel_id):
+            if extract_public_key(granted_by) == extract_public_key(space_id):
                 return True
         except Exception:
             return False
 
         # Load all capabilities in this role
         role_cap_prefix = f"auth/roles/{role_id}/rights/"
-        role_cap_states = self.state_store.list_state(channel_id, role_cap_prefix)
+        role_cap_states = self.state_store.list_state(space_id, role_cap_prefix)
 
         role_capabilities = []
         for cap_state in role_cap_states:
             # Verify state entry signature first
-            if not self._verify_state_entry_signature(channel_id, cap_state):
+            if not self._verify_state_entry_signature(space_id, cap_state):
                 print(f"Invalid state entry signature for role capability {cap_state.get('path', 'unknown')}")
                 continue
 
@@ -693,8 +693,8 @@ class AuthorizationEngine:
             return True
 
         # Load granter's capabilities (including their roles!)
-        granter_direct_caps = self._load_user_capabilities(channel_id, granted_by)
-        granter_role_caps = self._load_role_capabilities(channel_id, granted_by)
+        granter_direct_caps = self._load_user_capabilities(space_id, granted_by)
+        granter_role_caps = self._load_role_capabilities(space_id, granted_by)
         granter_all_caps = granter_direct_caps + granter_role_caps
 
         # Check if granter has permission to grant roles
@@ -881,7 +881,7 @@ class AuthorizationEngine:
 
     def verify_tool_creation(
         self,
-        channel_id: str,
+        space_id: str,
         path: str,
         tool_data: dict,
         creator_public_key: str,
@@ -897,7 +897,7 @@ class AuthorizationEngine:
         4. Path-content consistency: tool_id in data matches path
 
         Args:
-            channel_id: Typed channel identifier
+            space_id: Typed space identifier
             path: State path where tool is being defined (auth/tools/{tool_id})
             tool_data: The tool metadata being created
             creator_public_key: Typed user identifier of creator
@@ -923,18 +923,18 @@ class AuthorizationEngine:
         # TODO: Implement proper signature verification for tool creation
         # For now, trust state write validation
 
-        # Channel creator can create any tool
+        # Space creator can create any tool
         try:
             creator_bytes = extract_public_key(creator_public_key)
-            channel_bytes = extract_public_key(channel_id)
-            if creator_bytes == channel_bytes:
+            space_bytes = extract_public_key(space_id)
+            if creator_bytes == space_bytes:
                 return True
         except Exception:
             pass
 
         # Load creator's capabilities
-        creator_direct_caps = self._load_user_capabilities(channel_id, creator_public_key)
-        creator_role_caps = self._load_role_capabilities(channel_id, creator_public_key)
+        creator_direct_caps = self._load_user_capabilities(space_id, creator_public_key)
+        creator_role_caps = self._load_role_capabilities(space_id, creator_public_key)
         creator_all_caps = creator_direct_caps + creator_role_caps
 
         # Check if creator has permission to create this specific tool
@@ -954,12 +954,12 @@ class AuthorizationEngine:
 
         # Load tool's capabilities to verify creator has superset
         tool_cap_prefix = f"auth/tools/{tool_id_from_path}/rights/"
-        tool_cap_states = self.state_store.list_state(channel_id, tool_cap_prefix)
+        tool_cap_states = self.state_store.list_state(space_id, tool_cap_prefix)
 
         tool_capabilities = []
         for cap_state in tool_cap_states:
             # Verify state entry signature first
-            if not self._verify_state_entry_signature(channel_id, cap_state):
+            if not self._verify_state_entry_signature(space_id, cap_state):
                 print(f"Invalid state entry signature for tool capability {cap_state.get('path', 'unknown')}")
                 continue
 
