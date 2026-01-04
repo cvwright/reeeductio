@@ -161,3 +161,201 @@ def test_privilege_escalation_prevention(authz):
         {"op": "write", "path": "{any}"}
     ]
     assert not authz._has_capability_superset(granter_caps, requested_caps)
+
+
+def test_modify_capability(state_store, authz, admin_keypair, user_keypair):
+    """Test that modify capability works correctly"""
+    channel_id = admin_keypair['channel_id']
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+    user_id = user_keypair['user_id']
+
+    # Add the user to the channel
+    user_info = {
+        "user_id": user_id
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Grant user modify permission on test/* path
+    capability = {
+        "op": "modify",
+        "path": "test/{...}"
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/rights/modify_test",
+        contents=capability,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # User should have modify permission
+    assert authz.check_permission(channel_id, user_id, "modify", "test/data")
+
+    # User should NOT have create permission (modify doesn't grant create)
+    assert not authz.check_permission(channel_id, user_id, "create", "test/data")
+
+    # User should NOT have delete permission (modify doesn't grant delete)
+    assert not authz.check_permission(channel_id, user_id, "delete", "test/data")
+
+
+def test_delete_capability(state_store, authz, admin_keypair, user_keypair):
+    """Test that delete capability works correctly"""
+    channel_id = admin_keypair['channel_id']
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+    user_id = user_keypair['user_id']
+
+    # Add the user to the channel
+    user_info = {
+        "user_id": user_id
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Grant user delete permission on test/* path
+    capability = {
+        "op": "delete",
+        "path": "test/{...}"
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/rights/delete_test",
+        contents=capability,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # User should have delete permission
+    assert authz.check_permission(channel_id, user_id, "delete", "test/data")
+
+    # User should NOT have create permission (delete doesn't grant create)
+    assert not authz.check_permission(channel_id, user_id, "create", "test/data")
+
+    # User should NOT have modify permission (delete doesn't grant modify)
+    assert not authz.check_permission(channel_id, user_id, "modify", "test/data")
+
+
+def test_write_grants_all_operations(state_store, authz, admin_keypair, user_keypair):
+    """Test that write capability grants create, modify, delete, and read"""
+    channel_id = admin_keypair['channel_id']
+    admin_id = admin_keypair['user_id']
+    admin_private = admin_keypair['private']
+    user_id = user_keypair['user_id']
+
+    # Add the user to the channel
+    user_info = {
+        "user_id": user_id
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Grant user write permission
+    capability = {
+        "op": "write",
+        "path": "test/{...}"
+    }
+    sign_and_store_state(
+        state_store=state_store,
+        channel_id=channel_id,
+        path=f"auth/users/{user_id}/rights/write_test",
+        contents=capability,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=12345000
+    )
+
+    # Write should grant all operations
+    assert authz.check_permission(channel_id, user_id, "read", "test/data")
+    assert authz.check_permission(channel_id, user_id, "create", "test/data")
+    assert authz.check_permission(channel_id, user_id, "modify", "test/data")
+    assert authz.check_permission(channel_id, user_id, "delete", "test/data")
+    assert authz.check_permission(channel_id, user_id, "write", "test/data")
+
+
+def test_modify_delete_independence(authz):
+    """Test that modify and delete are independent operations"""
+    # User with modify can't grant delete
+    granter_caps = [
+        {"op": "modify", "path": "test/{...}"}
+    ]
+    requested_caps = [
+        {"op": "delete", "path": "test/{...}"}
+    ]
+    assert not authz._has_capability_superset(granter_caps, requested_caps)
+
+    # User with delete can't grant modify
+    granter_caps = [
+        {"op": "delete", "path": "test/{...}"}
+    ]
+    requested_caps = [
+        {"op": "modify", "path": "test/{...}"}
+    ]
+    assert not authz._has_capability_superset(granter_caps, requested_caps)
+
+    # User with create can't grant modify
+    granter_caps = [
+        {"op": "create", "path": "test/{...}"}
+    ]
+    requested_caps = [
+        {"op": "modify", "path": "test/{...}"}
+    ]
+    assert not authz._has_capability_superset(granter_caps, requested_caps)
+
+    # User with create can't grant delete
+    granter_caps = [
+        {"op": "create", "path": "test/{...}"}
+    ]
+    requested_caps = [
+        {"op": "delete", "path": "test/{...}"}
+    ]
+    assert not authz._has_capability_superset(granter_caps, requested_caps)
+
+
+def test_write_dominates_all_operations(authz):
+    """Test that write capability dominates create, modify, and delete"""
+    granter_caps = [
+        {"op": "write", "path": "test/{...}"}
+    ]
+
+    # Write can grant create
+    requested_caps = [{"op": "create", "path": "test/{...}"}]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # Write can grant modify
+    requested_caps = [{"op": "modify", "path": "test/{...}"}]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # Write can grant delete
+    requested_caps = [{"op": "delete", "path": "test/{...}"}]
+    assert authz._has_capability_superset(granter_caps, requested_caps)
+
+    # Write can grant read
+    requested_caps = [{"op": "read", "path": "test/{...}"}]
+    assert authz._has_capability_superset(granter_caps, requested_caps)

@@ -24,6 +24,15 @@ A new capability may be written to the state IFF
 
 The channel creator key is the super-admin and is always implicitly authorized to perform any action in the channel.
 
+The set of operations for a capability includes:
+- "write"
+- "create"
+- "read"
+- "modify" (should be "update" to match "CRUD"?)
+- "delete"
+
+In this scheme, "write" dominates all other operations, so a user who has a write capability on some object may grant any lesser operation on that object.
+
 ## Role-Based Access Control
 
 It would be convenient to have RBAC.  Otherwise the application must be careful to grant each new user the rights that they need for every subtree of the state that is used in the application.  It would be much more pleasant and less error-prone if we could simply give the new user a role like "user" or "default" and have all of the default permissions granted to them.

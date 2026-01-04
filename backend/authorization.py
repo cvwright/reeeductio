@@ -4,8 +4,15 @@ Authorization engine for capability-based access control
 Implements:
 - Capability loading and verification
 - Path pattern matching with wildcards
-- Permission checking (read/create/write)
+- Permission checking (read/create/modify/delete/write)
 - Capability subset validation (prevent privilege escalation)
+
+Operations:
+- read: Read-only access
+- create: Write access, but only if object does NOT already exist
+- modify: Write access, but only if object ALREADY exists
+- delete: Delete access (remove existing objects)
+- write: Full write access (dominates create, modify, and delete)
 """
 
 from typing import Optional, List, Dict, Any
@@ -86,7 +93,7 @@ class AuthorizationEngine:
         Args:
             channel_id: Channel identifier
             member_id: User or tool typed identifier
-            operation: 'read', 'create', or 'write'
+            operation: 'read', 'create', 'modify', 'delete', or 'write'
             state_path: State path being accessed
 
         Returns:
@@ -290,7 +297,7 @@ class AuthorizationEngine:
 
         Args:
             capability: Capability dict with 'op' and 'path'
-            operation: 'read', 'create', or 'write'
+            operation: 'read', 'create', 'modify', 'delete', or 'write'
             state_path: State path being accessed
             user_public_key: User's public key for {self} wildcard resolution
 
@@ -303,19 +310,27 @@ class AuthorizationEngine:
         # Check if path matches
         if not self._path_matches(cap_path, state_path, user_public_key):
             return False
-        
+
         # Check if operation is allowed
-        # write >= create > (nothing)
-        # read is separate
+        # Operation hierarchy:
+        # - write dominates all operations (create, modify, delete, read)
+        # - create, modify, and delete are independent of each other
+        # - read is independent
         if cap_op == "write":
-            # write grants both write and create
-            return operation in ["read", "create", "write"]
+            # write grants read, create, modify, delete, and write
+            return operation in ["read", "create", "modify", "delete", "write"]
         elif cap_op == "create":
-            # create only grants create (not write to existing)
+            # create only grants create (write to non-existing objects)
             return operation == "create"
+        elif cap_op == "modify":
+            # modify only grants modify (write to existing objects)
+            return operation == "modify"
+        elif cap_op == "delete":
+            # delete only grants delete (remove existing objects)
+            return operation == "delete"
         elif cap_op == "read":
             return operation == "read"
-        
+
         return False
     
     def _path_matches(self, pattern: str, path: str, user_public_key: Optional[str] = None) -> bool:
@@ -639,47 +654,58 @@ class AuthorizationEngine:
     ) -> bool:
         """
         Check if granter has a superset of the requested capabilities
-        
+
         This prevents privilege escalation - you can't grant what you don't have.
-        
+
+        Operation hierarchy:
+        - write dominates everything (create, modify, delete, read)
+        - create, modify, and delete are independent (none dominates the others)
+        - read is independent
+
         Args:
             granter_caps: Capabilities the granter has
             requested_caps: Capabilities being requested
-        
+
         Returns:
             True if granter has all requested capabilities (or stronger)
         """
         for req_cap in requested_caps:
             req_op = req_cap["op"]
             req_path = req_cap["path"]
-            
+
             # Check if granter has matching or stronger capability
             has_capability = False
-            
+
             for grant_cap in granter_caps:
                 grant_op = grant_cap["op"]
                 grant_path = grant_cap["path"]
-                
+
                 # Path must match or be a superset
                 # grant_path="/state/*" covers req_path="/state/members/"
                 if not self._path_covers(grant_path, req_path):
                     continue
-                
+
                 # Operation must be equal or stronger
                 if grant_op == "write":
-                    # write covers everything
+                    # write covers everything (create, modify, delete, read)
                     has_capability = True
                     break
                 elif grant_op == "create" and req_op == "create":
                     has_capability = True
                     break
+                elif grant_op == "modify" and req_op == "modify":
+                    has_capability = True
+                    break
+                elif grant_op == "delete" and req_op == "delete":
+                    has_capability = True
+                    break
                 elif grant_op == "read" and req_op == "read":
                     has_capability = True
                     break
-            
+
             if not has_capability:
                 return False
-        
+
         return True
     
     def _path_covers(self, grant_path: str, req_path: str) -> bool:
