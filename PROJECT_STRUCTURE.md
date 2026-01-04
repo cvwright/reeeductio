@@ -1,9 +1,9 @@
-# E2EE Messaging System - Project Structure
+# rEEEductio: Absurdly Simple Encrypted Spaces - Project Structure
 
 ## Files Overview
 
 ```
-e2ee-messaging/
+reeeductio/
 ├── README.md                  # Complete documentation
 ├── openapi.yaml              # OpenAPI 3.0 specification (shared)
 ├── pyproject.toml            # Python project metadata and dependencies
