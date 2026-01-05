@@ -8,3 +8,5 @@
 8. ~~Add "self" wildcard for paths~~ ✓
 9. Python client library (WIP)
 10. Javascript client library - Can we build automatically from the OpenAPI spec?
+11. Allow "@" character in paths, to enable email addresses as usernames in the login program
+12. High level client SDKs should have `setEncryptedState()` and `setPlaintextState()` but no ambiguous `setState()` function so it's always super clear what you're exposing to the server

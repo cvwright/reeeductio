@@ -19,3 +19,4 @@
 19. ~~Add logging~~ ✓
 20. Require capability for getting or putting blobs, based on state path `blobs/{blob_id}`
 21. Revisit ADMIN.md design in light of new limited `must_be_owner` capabilities
+22. Ensure that the Space rejects state entries that are too old ie from before `time.time() * 1000 - epsilon` where `epsilon` is typical internet clock skew.  This prevents replay attacks and is the whole purpose of including a `signed_at` field in the state entry in the first place.  (URGENT)
