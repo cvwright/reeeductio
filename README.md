@@ -125,6 +125,8 @@ Content-addressed storage for encrypted files/attachments.
 - **`read`**: Can GET state at matching paths
 - **`create`**: Can PUT state that doesn't exist yet
 - **`write`**: Can PUT state (both create and update) - superset of `create`
+- **`modify`**: Can PUT state that already exists (update only, not create)
+- **`delete`**: Can DELETE state at matching paths
 
 ### Path Patterns
 
@@ -146,9 +148,15 @@ Examples:
 ```json
 {
   "op": "create",
-  "path": "topics/{any}/messages/{...}"
+  "path": "topics/{any}/messages/{...}",
+  "must_be_owner": false
 }
 ```
+
+Fields:
+- **`op`**: The operation type (`read`, `create`, `write`, `modify`, `delete`)
+- **`path`**: The path pattern with optional wildcards
+- **`must_be_owner`** (optional): When `true`, the capability only applies to state entries where `signed_by` matches the acting user. Defaults to `false` if omitted.
 
 Note: The `granted_by`, `granted_at`, and `signature` fields are added automatically by the state storage system when a capability is created.
 
