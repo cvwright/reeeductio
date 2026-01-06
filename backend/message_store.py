@@ -31,8 +31,9 @@ class MessageStore(ABC):
         space_id: str,
         topic_id: str,
         message_hash: str,
+        msg_type: str,
         prev_hash: Optional[str],
-        encrypted_payload: str,
+        data: str,
         sender: str,
         signature: str,
         server_timestamp: int
@@ -44,8 +45,9 @@ class MessageStore(ABC):
             space_id: Space identifier
             topic_id: Topic identifier within the space
             message_hash: Content-addressed hash of the message
+            msg_type: Message type (e.g., "chat.text") or state path (e.g., "/auth/users/U_alice/rights/cap_123")
             prev_hash: Hash of the previous message in the chain (None for first message)
-            encrypted_payload: Encrypted message content
+            data: Message data (encrypted for chat, base64 state data for state events)
             sender: Public key of the sender
             signature: Cryptographic signature of the message
             server_timestamp: Unix timestamp when server received the message
@@ -75,8 +77,9 @@ class MessageStore(ABC):
             List of message dictionaries in chronological order, each containing:
                 - message_hash: Content-addressed hash of the message
                 - topic_id: Topic identifier
+                - type: Message type or state path
                 - prev_hash: Hash of previous message in chain
-                - encrypted_payload: Encrypted message content
+                - data: Message data (encrypted for chat, base64 for state)
                 - sender: Public key of sender
                 - signature: Cryptographic signature
                 - server_timestamp: Unix timestamp from server
@@ -102,8 +105,9 @@ class MessageStore(ABC):
             Dictionary containing:
                 - message_hash: Content-addressed hash of the message
                 - topic_id: Topic identifier
+                - type: Message type or state path
                 - prev_hash: Hash of previous message in chain
-                - encrypted_payload: Encrypted message content
+                - data: Message data (encrypted for chat, base64 for state)
                 - sender: Public key of sender
                 - signature: Cryptographic signature
                 - server_timestamp: Unix timestamp from server

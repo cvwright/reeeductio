@@ -153,8 +153,9 @@ class StateResponse(BaseModel):
 
 
 class MessagePost(BaseModel):
+    type: str = Field(default="chat.text", description="Message type (e.g., 'chat.text', 'chat.image')")
     prev_hash: Optional[str] = Field(None, description="SHA256 of previous message")
-    encrypted_payload: str = Field(..., description="Base64-encoded encrypted content", max_length=102_400)
+    data: str = Field(..., description="Base64-encoded message content", max_length=102_400)
     message_hash: str = Field(..., description="SHA256 hash of this message")
     signature: str = Field(..., description="Base64-encoded Ed25519 signature over message_hash")
 
@@ -162,8 +163,9 @@ class MessagePost(BaseModel):
 class Message(BaseModel):
     message_hash: str
     topic_id: str
+    type: str
     prev_hash: Optional[str]
-    encrypted_payload: str
+    data: str
     sender: str
     signature: str
     server_timestamp: int
@@ -383,8 +385,9 @@ async def post_message(
         server_timestamp = await space.post_message(
             topic_id=topic_id,
             message_hash=message.message_hash,
+            msg_type=message.type,
             prev_hash=message.prev_hash,
-            encrypted_payload=message.encrypted_payload,
+            data=message.data,
             signature=message.signature,
             token=credentials.credentials
         )

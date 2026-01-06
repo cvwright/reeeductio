@@ -123,3 +123,64 @@ def test_multiple_topics(firestore_message_store, unique_space_id):
 def test_multiple_spaces(firestore_message_store, unique_space_id):
     """Test message isolation between spaces"""
     generic_multiple_spaces(firestore_message_store, unique_space_id)
+
+
+def test_chain_conflict_detection(firestore_message_store, unique_space_id):
+    """Test that concurrent writes are detected via chain conflict in Firestore"""
+    from exceptions import ChainConflictError
+
+    space_id = unique_space_id
+
+    # Add first message
+    firestore_message_store.add_message(
+        space_id=space_id,
+        topic_id="state-events",
+        message_hash="hash_1",
+        msg_type="/auth/users/U_alice",
+        prev_hash=None,  # First message
+        data="data_1",
+        sender="U_admin",
+        signature="sig_1",
+        server_timestamp=1000
+    )
+
+    # Try to add another message claiming to be first (wrong prev_hash)
+    with pytest.raises(ChainConflictError) as exc_info:
+        firestore_message_store.add_message(
+            space_id=space_id,
+            topic_id="state-events",
+            message_hash="hash_2",
+            msg_type="/auth/users/U_bob",
+            prev_hash=None,  # Wrong! Should be hash_1
+            data="data_2",
+            sender="U_admin",
+            signature="sig_2",
+            server_timestamp=2000
+        )
+
+    assert "Chain conflict" in str(exc_info.value)
+    assert "expected prev_hash=hash_1" in str(exc_info.value)
+
+    # Verify only first message was added
+    events = firestore_message_store.get_messages(space_id, "state-events")
+    assert len(events) == 1
+    assert events[0]["message_hash"] == "hash_1"
+
+    # Now add with correct prev_hash
+    firestore_message_store.add_message(
+        space_id=space_id,
+        topic_id="state-events",
+        message_hash="hash_2",
+        msg_type="/auth/users/U_bob",
+        prev_hash="hash_1",  # Correct!
+        data="data_2",
+        sender="U_admin",
+        signature="sig_2",
+        server_timestamp=2000
+    )
+
+    # Verify both messages are now present
+    events = firestore_message_store.get_messages(space_id, "state-events")
+    assert len(events) == 2
+    assert events[0]["message_hash"] == "hash_1"
+    assert events[1]["message_hash"] == "hash_2"

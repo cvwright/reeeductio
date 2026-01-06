@@ -21,6 +21,7 @@ from blob_store import BlobStore
 from authorization import AuthorizationEngine
 from identifiers import extract_public_key
 from path_validation import validate_user_path, PathValidationError
+from exceptions import ChainConflictError
 import secrets
 import jwt
 
@@ -435,7 +436,37 @@ class Space:
             if not self.authz.verify_role_grant(self.space_id, path, role_grant_dict, signed_by):
                 raise ValueError("Invalid role grant or privilege escalation")
 
-        # Store state with signature
+        # Prepare message for state-events topic
+        # Get chain head BEFORE authorization check (this is our "lock version")
+        import hashlib
+        message_hash = hashlib.sha256(data.encode('utf-8')).hexdigest()
+        head = self.message_store.get_chain_head(self.space_id, "state-events")
+        prev_hash = head["message_hash"] if head else None
+
+        # Write to BOTH stores (dual-write for event sourcing)
+        # Order matters: message store validates chain atomically
+
+        try:
+            # 1. Write to state-events topic with CAS on chain head
+            #    If this succeeds, we own the new chain head
+            self.message_store.add_message(
+                space_id=self.space_id,
+                topic_id="state-events",
+                message_hash=message_hash,
+                msg_type=path,  # State path IS the message type!
+                prev_hash=prev_hash,
+                data=data,  # State data goes directly to message data
+                sender=signed_by,
+                signature=signature,
+                server_timestamp=signed_at
+            )
+        except ChainConflictError as e:
+            # Another state change happened concurrently
+            # Client should get new chain head and retry
+            raise ValueError(f"State conflict: {e}. Please retry with current chain head.")
+
+        # 2. Write to state table (the materialized view / cache)
+        #    Safe to do now - message is committed
         self.state_store.set_state(
             self.space_id,
             path,
@@ -491,13 +522,159 @@ class Space:
         if not self.check_permission(user["id"], "write", path):
             raise ValueError("No delete permission")
 
-        # Delete state
-        if not self.state_store.delete_state(self.space_id, path):
+        # Get current state for signature (need it for the deletion event)
+        existing = self.state_store.get_state(self.space_id, path)
+        if not existing:
             raise ValueError("State not found")
+
+        # Prepare deletion event for state-events topic
+        import hashlib
+        import time as time_module
+        current_time = int(time_module.time() * 1000)
+        # Hash includes path and timestamp to ensure uniqueness
+        deletion_marker = f"delete:{path}:{current_time}"
+        message_hash = hashlib.sha256(deletion_marker.encode('utf-8')).hexdigest()
+        head = self.message_store.get_chain_head(self.space_id, "state-events")
+        prev_hash = head["message_hash"] if head else None
+
+        # Write to BOTH stores (dual-write for event sourcing)
+        # Order matters: message store validates chain atomically
+
+        try:
+            # 1. Write deletion event to state-events topic (CAS on chain head)
+            self.message_store.add_message(
+                space_id=self.space_id,
+                topic_id="state-events",
+                message_hash=message_hash,
+                msg_type=path,  # State path IS the message type
+                prev_hash=prev_hash,
+                data="",  # EMPTY DATA = DELETION!
+                sender=existing["signed_by"],
+                signature=existing["signature"],
+                server_timestamp=current_time
+            )
+        except ChainConflictError as e:
+            # Another state change happened concurrently
+            raise ValueError(f"State conflict: {e}. Please retry with current chain head.")
+
+        # 2. Delete from state table (the materialized view)
+        #    Safe to do now - deletion event is committed
+        if not self.state_store.delete_state(self.space_id, path):
+            raise ValueError("Failed to delete state")
 
     def list_state(self, prefix: str) -> List[Dict[str, Any]]:
         """List state entries matching prefix"""
         return self.state_store.list_state(self.space_id, prefix)
+
+    def _apply_state_event(self, message: Dict[str, Any]) -> None:
+        """
+        Apply a state event to the state store (internal use only).
+
+        This updates the state store cache based on a message from the
+        state-events topic. Does NOT perform authorization checks since
+        the message has already been validated and committed to the chain.
+
+        Used when:
+        - Receiving state-events messages via post_message()
+        - Replaying state from events during initialization
+
+        Args:
+            message: Message dict with keys: type (path), data, sender,
+                     signature, server_timestamp
+        """
+        path = message["type"]  # Path is stored in type field
+        data = message["data"]
+
+        if data:
+            # Set operation (non-empty data)
+            self.state_store.set_state(
+                space_id=self.space_id,
+                path=path,
+                data=data,
+                signature=message["signature"],
+                signed_by=message["sender"],
+                signed_at=message["server_timestamp"]
+            )
+        else:
+            # Delete operation (empty data)
+            self.state_store.delete_state(self.space_id, path)
+
+    def replay_state_from_events(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Rebuild state by replaying all events from the state-events topic.
+
+        Returns:
+            Dictionary mapping state paths to their state entries
+        """
+        # Get all state events (ordered chronologically)
+        events = self.message_store.get_messages(
+            space_id=self.space_id,
+            topic_id="state-events",
+            limit=100000  # Get all events
+        )
+
+        state = {}
+
+        for event in events:
+            path = event["type"]  # Path is stored in type field!
+
+            if event["data"]:
+                # Set operation (non-empty data)
+                state[path] = {
+                    "path": path,
+                    "data": event["data"],
+                    "signature": event["signature"],
+                    "signed_by": event["sender"],
+                    "signed_at": event["server_timestamp"]
+                }
+            else:
+                # Delete operation (empty data)
+                state.pop(path, None)
+
+        return state
+
+    def verify_state_consistency(self) -> Dict[str, Any]:
+        """
+        Compare state table with replayed state from events.
+
+        Returns:
+            Dictionary with consistency check results:
+            - consistent: bool - whether states match
+            - missing_in_table: list - paths in events but not in table
+            - missing_in_events: list - paths in table but not in events
+            - mismatched: list - paths where data differs
+        """
+        # Get state from table
+        table_state = {}
+        all_state = self.state_store.list_state(self.space_id, "")
+        for entry in all_state:
+            table_state[entry["path"]] = entry
+
+        # Replay state from events
+        event_state = self.replay_state_from_events()
+
+        # Compare
+        table_paths = set(table_state.keys())
+        event_paths = set(event_state.keys())
+
+        missing_in_table = list(event_paths - table_paths)
+        missing_in_events = list(table_paths - event_paths)
+
+        mismatched = []
+        for path in table_paths & event_paths:
+            if table_state[path]["data"] != event_state[path]["data"]:
+                mismatched.append({
+                    "path": path,
+                    "table_data": table_state[path]["data"],
+                    "event_data": event_state[path]["data"]
+                })
+
+        return {
+            "consistent": len(missing_in_table) == 0 and len(missing_in_events) == 0 and len(mismatched) == 0,
+            "missing_in_table": missing_in_table,
+            "missing_in_events": missing_in_events,
+            "mismatched": mismatched
+        }
 
     # ========================================================================
     # Message Operations
@@ -507,8 +684,9 @@ class Space:
         self,
         topic_id: str,
         message_hash: str,
+        msg_type: str,
         prev_hash: Optional[str],
-        encrypted_payload: str,
+        data: str,
         signature: str,
         token: str
     ) -> int:
@@ -520,8 +698,9 @@ class Space:
         Args:
             topic_id: Topic identifier
             message_hash: SHA256 hash of the message
+            msg_type: Message type (e.g., "chat.text", "chat.image")
             prev_hash: Hash of previous message in chain (None for first)
-            encrypted_payload: Base64-encoded encrypted message content
+            data: Base64-encoded encrypted message content
             signature: Base64-encoded Ed25519 signature
             token: JWT authentication token
 
@@ -533,7 +712,7 @@ class Space:
         """
         # Authenticate
         user = self.authenticate_request(token)
-        sender = user["public_key"]
+        sender = user["id"]
 
         # Check tool use limit BEFORE processing (returns True if usage should be tracked)
         should_track_usage = self._check_tool_limit(sender)
@@ -543,7 +722,7 @@ class Space:
             raise ValueError("No post permission")
 
         # Validate message hash
-        expected_hash = self.compute_message_hash(topic_id, prev_hash, encrypted_payload, sender)
+        expected_hash = self.compute_message_hash(topic_id, prev_hash, data, sender)
         if expected_hash != message_hash:
             raise ValueError("Message hash mismatch")
 
@@ -553,40 +732,63 @@ class Space:
         if not self.verify_message_signature(message_hash, signature_bytes, sender_bytes):
             raise ValueError("Invalid message signature")
 
-        # Get current chain head
-        current_head = self.message_store.get_chain_head(self.space_id, topic_id)
+        # For state-events topic, also check state-specific authorization
+        if topic_id == "state-events":
+            path = msg_type  # Path is stored in the type field for state events
 
-        # Validate prev_hash
-        if current_head is None:
-            if prev_hash is not None:
-                raise ValueError("First message must have prev_hash=null")
-        else:
-            if prev_hash != current_head["message_hash"]:
-                raise ValueError(f"Chain conflict: expected prev_hash={current_head['message_hash']}")
+            # Determine operation type based on data and existing state
+            if data:
+                # Set/create operation - check if state exists
+                existing = self.state_store.get_state(self.space_id, path)
+                operation = "modify" if existing else "create"
+            else:
+                # Delete operation (empty data)
+                operation = "delete"
 
-        # Store message
+            # Check permission for this specific state path
+            if not self.check_permission(sender, operation, path):
+                raise ValueError(f"No {operation} permission for state path: {path}")
+
+        # Store message with atomic chain validation
         server_timestamp = int(time.time() * 1000)
-        self.message_store.add_message(
-            space_id=self.space_id,
-            topic_id=topic_id,
-            message_hash=message_hash,
-            prev_hash=prev_hash,
-            encrypted_payload=encrypted_payload,
-            sender=sender,
-            signature=signature,
-            server_timestamp=server_timestamp
-        )
+        try:
+            self.message_store.add_message(
+                space_id=self.space_id,
+                topic_id=topic_id,
+                message_hash=message_hash,
+                msg_type=msg_type,
+                prev_hash=prev_hash,
+                data=data,
+                sender=sender,
+                signature=signature,
+                server_timestamp=server_timestamp
+            )
+        except ChainConflictError as e:
+            # Chain conflict - client needs to get new head and retry
+            raise ValueError(f"Chain conflict: {e}. Please get current chain head and retry.")
 
         # Increment tool usage after successful write (only if tool has use_limit)
         if should_track_usage:
             self._increment_tool_usage(sender)
 
+        # If this is a state event, update the state store cache
+        if topic_id == "state-events":
+            message_dict = {
+                "type": msg_type,  # Path is in type field
+                "data": data,
+                "sender": sender,
+                "signature": signature,
+                "server_timestamp": server_timestamp
+            }
+            self._apply_state_event(message_dict)
+
         # Broadcast to WebSocket subscribers
         message_dict = {
             "message_hash": message_hash,
             "topic_id": topic_id,
+            "type": msg_type,
             "prev_hash": prev_hash,
-            "encrypted_payload": encrypted_payload,
+            "data": data,
             "sender": sender,
             "signature": signature,
             "server_timestamp": server_timestamp
@@ -623,7 +825,7 @@ class Space:
         user = self.authenticate_request(token)
 
         # Check read permission
-        if not self.check_permission(user["public_key"], "read", f"topics/{topic_id}/messages/"):
+        if not self.check_permission(user["id"], "read", f"topics/{topic_id}/messages/"):
             raise ValueError("No read permission for topic")
 
         # Get messages
@@ -654,7 +856,7 @@ class Space:
         user = self.authenticate_request(token)
 
         # Check read permission for the topic (before DB query for better security)
-        if not self.check_permission(user["public_key"], "read", f"topics/{topic_id}/messages/"):
+        if not self.check_permission(user["id"], "read", f"topics/{topic_id}/messages/"):
             raise ValueError("No read permission")
 
         # Get message

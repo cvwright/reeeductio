@@ -10,6 +10,7 @@ from abc import abstractmethod
 from typing import Optional, List, Dict, Any, ContextManager
 from contextlib import contextmanager
 from message_store import MessageStore
+from exceptions import ChainConflictError
 
 
 class SqlMessageStore(MessageStore):
@@ -69,8 +70,9 @@ class SqlMessageStore(MessageStore):
                     space_id TEXT NOT NULL,
                     topic_id TEXT NOT NULL,
                     message_hash TEXT NOT NULL PRIMARY KEY,
+                    type TEXT NOT NULL,
                     prev_hash TEXT,
-                    encrypted_payload TEXT NOT NULL,
+                    data TEXT NOT NULL,
                     sender TEXT NOT NULL,
                     signature TEXT NOT NULL,
                     server_timestamp INTEGER NOT NULL
@@ -88,6 +90,12 @@ class SqlMessageStore(MessageStore):
                 ON messages(space_id, topic_id, server_timestamp DESC)
             """)
 
+            # Index for filtering by type (useful for state events)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_messages_type
+                ON messages(space_id, topic_id, type)
+            """)
+
             conn.commit()
 
     def add_message(
@@ -95,30 +103,73 @@ class SqlMessageStore(MessageStore):
         space_id: str,
         topic_id: str,
         message_hash: str,
+        msg_type: str,
         prev_hash: Optional[str],
-        encrypted_payload: str,
+        data: str,
         sender: str,
         signature: str,
         server_timestamp: int
     ) -> None:
-        """Add a new message to a topic"""
+        """
+        Add a new message to a topic with atomic chain validation.
+
+        This implements compare-and-swap (CAS) on the chain head to prevent
+        race conditions. The transaction ensures atomicity between checking
+        the current head and inserting the new message.
+
+        Raises:
+            ChainConflictError: If prev_hash doesn't match current chain head
+        """
         ph = self._get_placeholder
 
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Build query with appropriate placeholders
-            placeholders = ", ".join([ph(i) for i in range(8)])
+            # Get current chain head (within transaction for atomicity)
+            cursor.execute(f"""
+                SELECT message_hash
+                FROM messages
+                WHERE space_id = {ph(0)} AND topic_id = {ph(1)}
+                ORDER BY server_timestamp DESC
+                LIMIT 1
+            """, (space_id, topic_id))
 
+            row = cursor.fetchone()
+            current_head = row["message_hash"] if row else None
+
+            # Validate chain continuity (CAS condition)
+            if current_head != prev_hash:
+                # Format error message with truncated hashes
+                if current_head is None:
+                    expected = "None (first message)"
+                else:
+                    expected = current_head[:16] + "..."
+                if prev_hash is None:
+                    got = "None"
+                else:
+                    got = prev_hash[:16] + "..."
+
+                raise ChainConflictError(
+                    f"Chain conflict in topic '{topic_id}': "
+                    f"expected prev_hash={expected}, got {got}. "
+                    f"Another message was added concurrently."
+                )
+
+            # Build query with appropriate placeholders
+            placeholders = ", ".join([ph(i) for i in range(9)])
+
+            # Insert message (chain validated - we own the new head)
             cursor.execute(f"""
                 INSERT INTO messages
-                (space_id, topic_id, message_hash, prev_hash,
-                 encrypted_payload, sender, signature, server_timestamp)
+                (space_id, topic_id, message_hash, type, prev_hash,
+                 data, sender, signature, server_timestamp)
                 VALUES ({placeholders})
             """, (
-                space_id, topic_id, message_hash, prev_hash,
-                encrypted_payload, sender, signature, server_timestamp
+                space_id, topic_id, message_hash, msg_type, prev_hash,
+                data, sender, signature, server_timestamp
             ))
+
+            # Transaction commits on context exit
 
         # Invalidate cache if present
         if self._cache is not None:
@@ -141,8 +192,8 @@ class SqlMessageStore(MessageStore):
             cursor = conn.cursor()
 
             query = """
-                SELECT message_hash, topic_id, prev_hash,
-                       encrypted_payload, sender, signature, server_timestamp
+                SELECT message_hash, topic_id, type, prev_hash,
+                       data, sender, signature, server_timestamp
                 FROM messages
                 WHERE space_id = {0} AND topic_id = {1}
             """
@@ -172,8 +223,9 @@ class SqlMessageStore(MessageStore):
                 messages.append({
                     "message_hash": row["message_hash"],
                     "topic_id": row["topic_id"],
+                    "type": row["type"],
                     "prev_hash": row["prev_hash"],
-                    "encrypted_payload": row["encrypted_payload"],
+                    "data": row["data"],
                     "sender": row["sender"],
                     "signature": row["signature"],
                     "server_timestamp": row["server_timestamp"]
@@ -202,8 +254,8 @@ class SqlMessageStore(MessageStore):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(f"""
-                SELECT message_hash, topic_id, prev_hash,
-                       encrypted_payload, sender, signature, server_timestamp
+                SELECT message_hash, topic_id, type, prev_hash,
+                       data, sender, signature, server_timestamp
                 FROM messages
                 WHERE space_id = {ph(0)} AND topic_id = {ph(1)} AND message_hash = {ph(2)}
             """, (space_id, topic_id, message_hash))
@@ -215,8 +267,9 @@ class SqlMessageStore(MessageStore):
             result = {
                 "message_hash": row["message_hash"],
                 "topic_id": row["topic_id"],
+                "type": row["type"],
                 "prev_hash": row["prev_hash"],
-                "encrypted_payload": row["encrypted_payload"],
+                "data": row["data"],
                 "sender": row["sender"],
                 "signature": row["signature"],
                 "server_timestamp": row["server_timestamp"]
