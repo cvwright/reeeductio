@@ -391,6 +391,20 @@ class Space:
         if not self.crypto.verify_signature(message_to_sign, signature_bytes, signer_public_key):
             raise ValueError("Invalid state entry signature")
 
+        # CRITICAL SECURITY: Verify chain of trust for the signer
+        # This prevents database tampering attacks where an adversary inserts
+        # a new public key directly into the database
+        # Exception: When creating new users/tools, we verify the chain in the
+        # specific validation methods below, not here (chicken-and-egg problem)
+        is_member_creation = (
+            (path.startswith("auth/users/") and path.count('/') == 2) or
+            (path.startswith("auth/tools/") and path.count('/') == 2)
+        )
+        if not is_member_creation:
+            # For all other writes, signer must have valid chain of trust
+            if not self.authz.verify_chain_of_trust(self.space_id, signed_by):
+                raise ValueError(f"Signer {signed_by} has invalid chain of trust")
+
         # For capability paths, validate capability structure
         if self.is_capability_path(path):
             # Decode and validate capability
@@ -435,6 +449,14 @@ class Space:
             if not self.authz.verify_role_grant(self.space_id, path, role_grant_dict, signed_by):
                 raise ValueError("Invalid role grant or privilege escalation")
 
+        # For user/tool creation, verify the creator has valid chain of trust
+        # The new user/tool won't have a chain yet (we're creating it), but the
+        # creator must have a valid chain
+        if is_member_creation:
+            # Verify the creator (signed_by) has valid chain of trust
+            if not self.authz.verify_chain_of_trust(self.space_id, signed_by):
+                raise ValueError(f"Creator {signed_by} has invalid chain of trust - cannot create new members")
+
         # Store state with signature
         self.state_store.set_state(
             self.space_id,
@@ -444,6 +466,13 @@ class Space:
             signed_by,
             signed_at
         )
+
+        # Invalidate chain cache when member entries are created or modified
+        # This ensures chain verification reflects the latest state
+        if is_member_creation:
+            # Extract member_id from path (auth/users/{id} or auth/tools/{id})
+            member_id = path.split('/')[2]
+            self.authz.invalidate_chain_cache(self.space_id, member_id)
 
         # If creating a use-limited tool, initialize usage tracking
         if path.startswith("auth/tools/") and path.count('/') == 2:

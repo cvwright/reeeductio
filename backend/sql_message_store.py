@@ -101,15 +101,57 @@ class SqlMessageStore(MessageStore):
         signature: str,
         server_timestamp: int
     ) -> None:
-        """Add a new message to a topic"""
+        """
+        Add a new message to a topic with atomic chain validation.
+
+        This implements compare-and-swap (CAS) on the chain head to prevent
+        race conditions. The transaction ensures atomicity between checking
+        the current head and inserting the new message.
+
+        Raises:
+            ChainConflictError: If prev_hash doesn't match current chain head
+        """
+        from exceptions import ChainConflictError
+
         ph = self._get_placeholder
 
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
+            # Get current chain head (within transaction for atomicity)
+            cursor.execute(f"""
+                SELECT message_hash
+                FROM messages
+                WHERE space_id = {ph(0)} AND topic_id = {ph(1)}
+                ORDER BY server_timestamp DESC
+                LIMIT 1
+            """, (space_id, topic_id))
+
+            row = cursor.fetchone()
+            current_head = row["message_hash"] if row else None
+
+            # Validate chain continuity (CAS condition)
+            if current_head != prev_hash:
+                # Format error message with truncated hashes
+                if current_head is None:
+                    expected = "None (first message)"
+                else:
+                    expected = current_head[:16] + "..."
+                if prev_hash is None:
+                    got = "None"
+                else:
+                    got = prev_hash[:16] + "..."
+
+                raise ChainConflictError(
+                    f"Chain conflict in topic '{topic_id}': "
+                    f"expected prev_hash={expected}, got {got}. "
+                    f"Another message was added concurrently."
+                )
+
             # Build query with appropriate placeholders
             placeholders = ", ".join([ph(i) for i in range(8)])
 
+            # Insert message (chain validated - we own the new head)
             cursor.execute(f"""
                 INSERT INTO messages
                 (space_id, topic_id, message_hash, prev_hash,
@@ -119,6 +161,8 @@ class SqlMessageStore(MessageStore):
                 space_id, topic_id, message_hash, prev_hash,
                 encrypted_payload, sender, signature, server_timestamp
             ))
+
+            # Transaction commits on context exit
 
         # Invalidate cache if present
         if self._cache is not None:

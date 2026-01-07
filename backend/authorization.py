@@ -42,6 +42,9 @@ class AuthorizationEngine:
     def __init__(self, state_store: StateStore, crypto: CryptoUtils):
         self.state_store = state_store
         self.crypto = crypto
+        # Cache for validated public key chains: (space_id, member_id) -> bool
+        # This avoids re-walking the chain on every operation
+        self._chain_validation_cache: Dict[tuple, bool] = {}
 
     def _is_tool(self, identifier: str) -> bool:
         """Check if an identifier is a tool (has 'T' type prefix)"""
@@ -223,7 +226,16 @@ class AuthorizationEngine:
         auth/users/{public_key}/rights/{capability_id}
 
         Data is base64-encoded JSON, so we need to decode it.
+
+        SECURITY: Also verifies the chain of trust for the user to prevent
+        database tampering attacks.
         """
+        # CRITICAL: Verify user has valid chain of trust back to space admin
+        # This prevents an attacker from inserting a user directly into the database
+        if not self.verify_chain_of_trust(space_id, user_id):
+            print(f"User {user_id} has invalid chain of trust - rejecting all capabilities")
+            return []
+
         prefix = f"auth/users/{user_id}/rights"
         capability_states = self.state_store.list_state(space_id, prefix)
         print(f"Found {len(capability_states)} rights state entries for user {user_id}")
@@ -233,6 +245,12 @@ class AuthorizationEngine:
             # Verify state entry signature first
             if not self._verify_state_entry_signature(space_id, state):
                 print(f"Invalid state entry signature for {state.get('path', 'unknown')}")
+                continue
+
+            # SECURITY: Verify the signer has a valid chain of trust
+            signed_by = state.get("signed_by")
+            if signed_by and not self.verify_chain_of_trust(space_id, signed_by):
+                print(f"Capability at {state.get('path')} signed by untrusted key {signed_by}")
                 continue
 
             # Decode base64 data and parse JSON
@@ -258,7 +276,7 @@ class AuthorizationEngine:
         Process:
         1. Load user's role memberships from auth/users/{user_id}/roles/
         2. For each role, load role's capabilities from auth/roles/{role_id}/rights/
-        3. Verify all capability signatures
+        3. Verify all capability signatures and chain of trust
         4. Return combined list of all role capabilities
 
         Args:
@@ -267,7 +285,15 @@ class AuthorizationEngine:
 
         Returns:
             List of capability dictionaries from all roles
+
+        SECURITY: Verifies chain of trust for user and all signers to prevent
+        database tampering attacks.
         """
+        # CRITICAL: Verify user has valid chain of trust back to space admin
+        if not self.verify_chain_of_trust(space_id, user_id):
+            print(f"User {user_id} has invalid chain of trust - rejecting all role capabilities")
+            return []
+
         # Load user's role grants
         role_prefix = f"auth/users/{user_id}/roles/"
         role_grants = self.state_store.list_state(space_id, role_prefix)
@@ -278,6 +304,12 @@ class AuthorizationEngine:
             # Verify role grant state entry signature first
             if not self._verify_state_entry_signature(space_id, role_grant_state):
                 print(f"Invalid state entry signature for role grant {role_grant_state.get('path', 'unknown')}")
+                continue
+
+            # SECURITY: Verify the role grant signer has a valid chain of trust
+            signed_by = role_grant_state.get("signed_by")
+            if signed_by and not self.verify_chain_of_trust(space_id, signed_by):
+                print(f"Role grant at {role_grant_state.get('path')} signed by untrusted key {signed_by}")
                 continue
 
             try:
@@ -302,6 +334,12 @@ class AuthorizationEngine:
                     # Verify role capability state entry signature
                     if not self._verify_state_entry_signature(space_id, cap_state):
                         print(f"Invalid state entry signature for role capability {cap_state.get('path', 'unknown')}")
+                        continue
+
+                    # SECURITY: Verify the capability signer has a valid chain of trust
+                    cap_signed_by = cap_state.get("signed_by")
+                    if cap_signed_by and not self.verify_chain_of_trust(space_id, cap_signed_by):
+                        print(f"Role capability at {cap_state.get('path')} signed by untrusted key {cap_signed_by}")
                         continue
 
                     try:
@@ -335,7 +373,15 @@ class AuthorizationEngine:
 
         Returns:
             List of capability dictionaries
+
+        SECURITY: Verifies chain of trust for tool and all signers to prevent
+        database tampering attacks.
         """
+        # CRITICAL: Verify tool has valid chain of trust back to space admin
+        if not self.verify_chain_of_trust(space_id, tool_public_key):
+            print(f"Tool {tool_public_key} has invalid chain of trust - rejecting all capabilities")
+            return []
+
         prefix = f"auth/tools/{tool_public_key}/rights/"
         capability_states = self.state_store.list_state(space_id, prefix)
 
@@ -344,6 +390,12 @@ class AuthorizationEngine:
             # Verify state entry signature first
             if not self._verify_state_entry_signature(space_id, state):
                 print(f"Invalid state entry signature for tool capability {state.get('path', 'unknown')}")
+                continue
+
+            # SECURITY: Verify the signer has a valid chain of trust
+            signed_by = state.get("signed_by")
+            if signed_by and not self.verify_chain_of_trust(space_id, signed_by):
+                print(f"Tool capability at {state.get('path')} signed by untrusted key {signed_by}")
                 continue
 
             try:
@@ -878,6 +930,111 @@ class AuthorizationEngine:
             # {any} subsumes everything except {...}
             return requested_seg != '{...}'
         return granter_seg == requested_seg
+
+    def verify_chain_of_trust(
+        self,
+        space_id: str,
+        member_id: str,
+        skip_cache: bool = False
+    ) -> bool:
+        """
+        Verify that a member (user or tool) has a valid chain of trust back to the space admin.
+
+        This prevents database tampering attacks where an adversary inserts a new public key
+        directly into the database. Every member must have been added by someone who was
+        themselves added by the admin (or by the admin directly).
+
+        The chain of trust works as follows:
+        1. Space admin's public key is the root of trust (same as space_id)
+        2. Each user/tool entry at auth/users/{id} or auth/tools/{id} must be signed by
+           someone who has a valid chain back to the space admin
+        3. We recursively verify the chain by checking who signed each entry
+
+        Args:
+            space_id: Space identifier
+            member_id: User or tool typed identifier to verify
+            skip_cache: If True, bypass cache and re-validate (for testing)
+
+        Returns:
+            True if member has valid chain to space admin, False otherwise
+        """
+        # Check cache first (unless explicitly skipped)
+        if not skip_cache:
+            cache_key = (space_id, member_id)
+            if cache_key in self._chain_validation_cache:
+                return self._chain_validation_cache[cache_key]
+
+        # Space admin is the root of trust
+        try:
+            space_pubkey = extract_public_key(space_id)
+            member_pubkey = extract_public_key(member_id)
+            if space_pubkey == member_pubkey:
+                # Member IS the space admin - valid by definition
+                result = True
+                if not skip_cache:
+                    self._chain_validation_cache[(space_id, member_id)] = result
+                return result
+        except Exception:
+            # Invalid identifier format
+            return False
+
+        # Get the member's registration entry
+        if self._is_tool(member_id):
+            member_path = f"auth/tools/{member_id}"
+        else:
+            member_path = f"auth/users/{member_id}"
+
+        member_entry = self.state_store.get_state(space_id, member_path)
+        if not member_entry:
+            # Member not registered in space
+            return False
+
+        # Verify the member entry's signature
+        if not self._verify_state_entry_signature(space_id, member_entry):
+            print(f"Chain validation failed: Invalid signature on {member_path}")
+            return False
+
+        # Get who signed this member's entry
+        signed_by = member_entry.get("signed_by")
+        if not signed_by:
+            print(f"Chain validation failed: No signed_by field in {member_path}")
+            return False
+
+        # Recursively verify the signer's chain
+        # This prevents infinite loops because:
+        # 1. Space admin case returns immediately (base case)
+        # 2. Each member can only be signed once (no cycles in state)
+        # 3. Maximum depth is bounded by the number of members in the space
+        signer_valid = self.verify_chain_of_trust(space_id, signed_by, skip_cache)
+
+        if not signer_valid:
+            print(f"Chain validation failed: Signer {signed_by} is not valid for {member_id}")
+
+        # Cache the result
+        if not skip_cache:
+            self._chain_validation_cache[(space_id, member_id)] = signer_valid
+
+        return signer_valid
+
+    def invalidate_chain_cache(self, space_id: str, member_id: Optional[str] = None) -> None:
+        """
+        Invalidate chain validation cache.
+
+        Call this when a member is added, removed, or their entry is modified.
+
+        Args:
+            space_id: Space identifier
+            member_id: If provided, only invalidate this member. Otherwise invalidate entire space.
+        """
+        if member_id:
+            # Invalidate specific member
+            cache_key = (space_id, member_id)
+            self._chain_validation_cache.pop(cache_key, None)
+        else:
+            # Invalidate entire space
+            keys_to_remove = [k for k in self._chain_validation_cache.keys() if k[0] == space_id]
+            for key in keys_to_remove:
+                del self._chain_validation_cache[key]
 
     def verify_tool_creation(
         self,

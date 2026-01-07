@@ -124,6 +124,18 @@ class TestToolWithCapabilities:
         state_store = SqliteStateStore(temp_db_path)
         crypto = CryptoUtils()
 
+        # First, register the tool in the space (required for chain of trust)
+        tool_info = {"tool_id": tool_id}
+        sign_and_store_state(
+            space_id=space_id,
+            path=f"auth/tools/{tool_id}",
+            contents=tool_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=123456789,
+            state_store=state_store
+        )
+
         # Grant tool capability to create user entries
         tool_cap = {
             "op": "create",
@@ -153,6 +165,18 @@ class TestToolWithCapabilities:
 
         state_store = SqliteStateStore(temp_db_path)
         crypto = CryptoUtils()
+
+        # First, register the tool in the space
+        tool_info = {"tool_id": tool_id}
+        sign_and_store_state(
+            space_id=space_id,
+            path=f"auth/tools/{tool_id}",
+            contents=tool_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=123456789,
+            state_store=state_store
+        )
 
         # Grant tool capability to create user entries ONLY
         tool_cap = {
@@ -187,6 +211,18 @@ class TestToolWithCapabilities:
 
         state_store = SqliteStateStore(temp_db_path)
         crypto = CryptoUtils()
+
+        # First, register the tool in the space
+        tool_info = {"tool_id": tool_id}
+        sign_and_store_state(
+            space_id=space_id,
+            path=f"auth/tools/{tool_id}",
+            contents=tool_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
+        )
 
         # Create a "user" role first
         user_role = {
@@ -318,6 +354,21 @@ class TestToolCreationValidation:
         admin_id = admin_keypair['user_id']
         admin_private = admin_keypair['private']
 
+        state_store = SqliteStateStore(temp_db_path)
+        crypto = CryptoUtils()
+
+        # First, add the user to the space (required for chain of trust)
+        user_info = {"user_id": user_id}
+        sign_and_store_state(
+            space_id=space_id,
+            path=f"auth/users/{user_id}",
+            contents=user_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
+        )
+
         tool_data = {
             "tool_id": tool_id,
             "description": "Test tool"
@@ -333,9 +384,6 @@ class TestToolCreationValidation:
         )
 
         # Grant user permission to create tools
-        state_store = SqliteStateStore(temp_db_path)
-        crypto = CryptoUtils()
-
         user_cap = {
             "op": "create",
             "path": "auth/tools/{any}"
@@ -370,6 +418,18 @@ class TestToolCreationValidation:
 
         state_store = SqliteStateStore(temp_db_path)
         crypto = CryptoUtils()
+
+        # First, add the user to the space (required for chain of trust)
+        user_info = {"user_id": user_id}
+        sign_and_store_state(
+            space_id=space_id,
+            path=f"auth/users/{user_id}",
+            contents=user_info,
+            signer_private_key=admin_private,
+            signer_user_id=admin_id,
+            signed_at=1234567890,
+            state_store=state_store
+        )
 
         # Give user permission to create tool entries
         user_cap = {

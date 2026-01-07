@@ -44,38 +44,74 @@ class FirestoreMessageStore(MessageStore):
         server_timestamp: int
     ) -> None:
         """
-        Add a new message to a topic using a batched write for atomicity
+        Add a new message to a topic with atomic chain validation.
 
-        The batch ensures that both the message document and the chain head
-        update succeed or fail together.
+        This implements compare-and-swap (CAS) on the chain head to prevent
+        race conditions. The transaction ensures atomicity between checking
+        the current head and inserting the new message.
+
+        Raises:
+            ChainConflictError: If prev_hash doesn't match current chain head
         """
-        batch = self.db.batch()
+        from exceptions import ChainConflictError
 
-        # Add message document
-        msg_ref = self.db.collection('spaces').document(space_id) \
-                        .collection('topics').document(topic_id) \
-                        .collection('messages').document(message_hash)
+        @firestore.transactional
+        def add_message_transaction(transaction):
+            # Get references
+            topic_ref = self.db.collection('spaces').document(space_id) \
+                              .collection('topics').document(topic_id)
 
-        batch.set(msg_ref, {
-            'message_hash': message_hash,
-            'prev_hash': prev_hash,
-            'encrypted_payload': encrypted_payload,
-            'sender': sender,
-            'signature': signature,
-            'server_timestamp': server_timestamp
-        })
+            msg_ref = self.db.collection('spaces').document(space_id) \
+                            .collection('topics').document(topic_id) \
+                            .collection('messages').document(message_hash)
 
-        # Update chain head in topic document
-        topic_ref = self.db.collection('spaces').document(space_id) \
-                          .collection('topics').document(topic_id)
+            # Get current chain head (within transaction for atomicity)
+            topic_doc = topic_ref.get(transaction=transaction)
 
-        batch.set(topic_ref, {
-            'chain_head': message_hash,
-            'last_updated': server_timestamp
-        }, merge=True)
+            if topic_doc.exists:
+                topic_data = topic_doc.to_dict()
+                current_head = topic_data.get('chain_head')
+            else:
+                current_head = None
 
-        # Commit both operations atomically
-        batch.commit()
+            # Validate chain continuity (CAS condition)
+            if current_head != prev_hash:
+                # Format error message with truncated hashes
+                if current_head is None:
+                    expected = "None (first message)"
+                else:
+                    expected = current_head[:16] + "..."
+                if prev_hash is None:
+                    got = "None"
+                else:
+                    got = prev_hash[:16] + "..."
+
+                raise ChainConflictError(
+                    f"Chain conflict in topic '{topic_id}': "
+                    f"expected prev_hash={expected}, got {got}. "
+                    f"Another message was added concurrently."
+                )
+
+            # Insert message (chain validated - we own the new head)
+            transaction.set(msg_ref, {
+                'message_hash': message_hash,
+                'prev_hash': prev_hash,
+                'encrypted_payload': encrypted_payload,
+                'sender': sender,
+                'signature': signature,
+                'server_timestamp': server_timestamp
+            })
+
+            # Update chain head
+            transaction.set(topic_ref, {
+                'chain_head': message_hash,
+                'last_updated': server_timestamp
+            }, merge=True)
+
+        # Execute transaction
+        transaction = self.db.transaction()
+        add_message_transaction(transaction)
+
 
     def get_messages(
         self,
