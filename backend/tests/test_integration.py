@@ -70,8 +70,9 @@ def test_end_to_end_workflow(message_store, state_store, crypto, authz, admin_ke
         space_id=space_id,
         topic_id="general-chat",
         message_hash=msg_hash,
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="encrypted_content",
+        data="encrypted_content",
         sender=user_id,
         signature=crypto.base64_encode(msg_signature),
         server_timestamp=12347000

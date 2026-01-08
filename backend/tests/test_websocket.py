@@ -164,7 +164,7 @@ class TestWebSocketEndpoint:
                 "message_hash": "test_hash_123",
                 "topic_id": "general",
                 "prev_hash": None,
-                "encrypted_payload": "test_payload",
+                "data": "test_payload",
                 "sender": user_id,
                 "signature": "test_signature",
                 "server_timestamp": 12345000
@@ -206,9 +206,9 @@ class TestWebSocketMessageBroadcasting:
 
         # Post a message (this should trigger broadcast)
         topic_id = "general-chat"
-        encrypted_payload = "encrypted_content"
+        data = "encrypted_content"
         msg_hash = crypto.compute_message_hash(
-            space_id, topic_id, None, encrypted_payload, admin_id
+            space_id, topic_id, None, data, admin_id
         )
         signature = crypto.base64_encode(
             admin_private.sign(msg_hash.encode('utf-8'))
@@ -218,8 +218,9 @@ class TestWebSocketMessageBroadcasting:
             space_id=space_id,
             topic_id=topic_id,
             message_hash=msg_hash,
+        msg_type="chat.text",
             prev_hash=None,
-            encrypted_payload=encrypted_payload,
+            data=data,
             sender=admin_id,
             signature=signature,
             server_timestamp=12345000
@@ -230,7 +231,7 @@ class TestWebSocketMessageBroadcasting:
             "message_hash": msg_hash,
             "topic_id": topic_id,
             "prev_hash": None,
-            "encrypted_payload": encrypted_payload,
+            "data": data,
             "sender": admin_id,
             "signature": signature,
             "server_timestamp": 12345000

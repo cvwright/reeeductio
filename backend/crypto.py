@@ -73,7 +73,7 @@ class CryptoUtils:
         space_id: str,
         topic_id: str,
         prev_hash: Optional[str],
-        encrypted_payload: str,
+        data: str,
         sender: str
     ) -> str:
         """
@@ -86,7 +86,7 @@ class CryptoUtils:
             space_id: Typed space identifier (44 chars)
             topic_id: Topic identifier string
             prev_hash: Typed message identifier of previous message (or None)
-            encrypted_payload: Base64-encoded encrypted content
+            data: Base64-encoded message content
             sender: Typed user identifier (44 chars)
 
         Returns:
@@ -96,7 +96,7 @@ class CryptoUtils:
         prev_hash_str = prev_hash if prev_hash else "null"
 
         message_data = (
-            f"{space_id}|{topic_id}|{prev_hash_str}|{encrypted_payload}|{sender}"
+            f"{space_id}|{topic_id}|{prev_hash_str}|{data}|{sender}"
         )
 
         # Compute SHA256

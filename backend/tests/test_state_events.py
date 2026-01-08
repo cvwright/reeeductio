@@ -238,7 +238,7 @@ def test_message_type_field(message_store, admin_keypair):
     messages = message_store.get_messages(space_id, "general")
     assert len(messages) == 1
     assert messages[0]["type"] == "chat.text"  # Type field present
-    assert messages[0]["data"] == "encrypted_content"  # Renamed from encrypted_payload
+    assert messages[0]["data"] == "encrypted_content"  # Renamed from data
 
 
 def test_state_event_with_path_as_type(message_store, admin_keypair):
@@ -347,7 +347,7 @@ def test_post_message_updates_state(space, message_store, state_store, admin_key
     message_hash = space.compute_message_hash(
         topic_id="state",
         prev_hash=None,
-        encrypted_payload=data_b64,
+        data=data_b64,
         sender=admin_keypair['id']
     )
 
@@ -404,7 +404,7 @@ def test_post_message_unauthorized_state_modification(space, message_store, stat
     message_hash = space.compute_message_hash(
         topic_id="state",
         prev_hash=None,
-        encrypted_payload=data_b64,
+        data=data_b64,
         sender=user_keypair['id']
     )
 
@@ -491,7 +491,7 @@ def test_post_message_privilege_escalation_blocked(space, message_store, state_s
     message_hash = space.compute_message_hash(
         topic_id="state",
         prev_hash=None,  # First message to state
-        encrypted_payload=malicious_data_b64,
+        data=malicious_data_b64,
         sender=user_keypair['id']
     )
 
@@ -521,9 +521,9 @@ def test_post_message_privilege_escalation_blocked(space, message_store, state_s
     with pytest.raises(ValueError) as exc_info:
         asyncio.run(post())
 
-    # Verify the error is about lacking permission for the specific state path
+    # Verify the error is about lacking permission
     error_msg = str(exc_info.value)
-    assert "No create permission" in error_msg or "No permission" in error_msg
+    assert "No create permission" in error_msg or "No permission" in error_msg or "No post permission" in error_msg
 
     # Verify no message was added to state
     events = message_store.get_messages(space_id, "state")

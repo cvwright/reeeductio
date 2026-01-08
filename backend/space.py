@@ -439,9 +439,11 @@ class Space:
         # Prepare message for state-events topic
         # Get chain head BEFORE authorization check (this is our "lock version")
         import hashlib
-        message_hash = hashlib.sha256(data.encode('utf-8')).hexdigest()
+        # Include path, prev_hash, and timestamp to ensure uniqueness even with same data
         head = self.message_store.get_chain_head(self.space_id, "state")
         prev_hash = head["message_hash"] if head else None
+        prev_hash_str = prev_hash if prev_hash else ""
+        message_hash = hashlib.sha256(f"{path}|{data}|{prev_hash_str}|{signed_at}".encode('utf-8')).hexdigest()
 
         # Write to BOTH stores (dual-write for event sourcing)
         # Order matters: message store validates chain atomically
@@ -1317,7 +1319,7 @@ class Space:
         self,
         topic_id: str,
         prev_hash: Optional[str],
-        encrypted_payload: str,
+        data: str,
         sender: str
     ) -> str:
         """Compute the hash for a message"""
@@ -1325,7 +1327,7 @@ class Space:
             self.space_id,
             topic_id,
             prev_hash,
-            encrypted_payload,
+            data,
             sender
         )
 
