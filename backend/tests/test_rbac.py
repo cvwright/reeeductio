@@ -116,6 +116,18 @@ def test_load_role_capabilities(authz, space_with_roles, user_keypair, admin_key
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
 
+    # First, add the user to the space (required for chain of trust)
+    user_info = {"user_id": user_id}
+    sign_and_store_state(
+        state_store=state_store,
+        space_id=space_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
+    )
+
     # Grant "user" role to the user
     role_grant = {
         "user_id": user_id,
@@ -198,6 +210,18 @@ def test_multiple_roles(authz, space_with_roles, user_keypair, admin_keypair):
 
     admin_id = admin_keypair['user_id']
     admin_private = admin_keypair['private']
+
+    # First, add the user to the space (required for chain of trust)
+    user_info = {"user_id": user_id}
+    sign_and_store_state(
+        state_store=state_store,
+        space_id=space_id,
+        path=f"auth/users/{user_id}",
+        contents=user_info,
+        signer_private_key=admin_private,
+        signer_user_id=admin_id,
+        signed_at=1234567890
+    )
 
     # Grant both "user" and "moderator" roles
     user_role_grant = {
