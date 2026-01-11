@@ -215,3 +215,38 @@ class FirestoreMessageStore(MessageStore):
         return {
             'message_hash': data['chain_head']
         }
+
+    def get_most_recent_message(
+        self,
+        space_id: str,
+        topic_id: str,
+        type: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the most recent message of a given type
+
+        Uses indexed query on server_timestamp filtered by type for efficient retrieval.
+        """
+        query = self.db.collection('spaces').document(space_id) \
+                      .collection('topics').document(topic_id) \
+                      .collection('messages') \
+                      .where(filter=FieldFilter('type', '==', type)) \
+                      .order_by('server_timestamp', direction=firestore.Query.DESCENDING) \
+                      .limit(1)
+
+        # Execute query
+        docs = list(query.stream())
+        if not docs:
+            return None
+
+        doc_data = docs[0].to_dict()
+        return {
+            'message_hash': doc_data['message_hash'],
+            'topic_id': topic_id,
+            'type': doc_data['type'],
+            'prev_hash': doc_data['prev_hash'],
+            'data': doc_data['data'],
+            'sender': doc_data['sender'],
+            'signature': doc_data['signature'],
+            'server_timestamp': doc_data['server_timestamp']
+        }

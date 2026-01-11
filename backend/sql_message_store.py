@@ -321,3 +321,38 @@ class SqlMessageStore(MessageStore):
                 self._cache.set(cache_key, result)
 
             return result
+
+    def get_most_recent_message(
+        self,
+        space_id: str,
+        topic_id: str,
+        type: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get the most recent message of a given type"""
+        ph = self._get_placeholder
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                SELECT message_hash, topic_id, type, prev_hash,
+                       data, sender, signature, server_timestamp
+                FROM messages
+                WHERE space_id = {ph(0)} AND topic_id = {ph(1)} AND type = {ph(2)}
+                ORDER BY server_timestamp DESC
+                LIMIT 1
+            """, (space_id, topic_id, type))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                "message_hash": row["message_hash"],
+                "topic_id": row["topic_id"],
+                "type": row["type"],
+                "prev_hash": row["prev_hash"],
+                "data": row["data"],
+                "sender": row["sender"],
+                "signature": row["signature"],
+                "server_timestamp": row["server_timestamp"]
+            }

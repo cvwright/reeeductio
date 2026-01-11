@@ -134,3 +134,31 @@ class MessageStore(ABC):
             None if topic has no messages
         """
         pass
+
+    @abstractmethod
+    def get_most_recent_message(
+        self,
+        space_id: str,
+        topic_id: str,
+        type: str
+    ) -> Optional[Dict[str,Any]]:
+        """
+        Get the most recent message of a given type
+
+        Args:
+            space_id: Space identifier
+            topic_id: Topic identifier within the space
+            type: Message type within the topic
+
+        Returns:
+            Dictionary containing:
+                - message_hash: Hash of the most recent message
+                - topic_id: Topic identifier
+                - type: Message type or state path
+                - prev_hash: Hash of previous message in chain
+                - data: Message data (encrypted for chat, base64 for state)
+                - sender: Public key of sender
+                - signature: Cryptographic signature
+                - server_timestamp: Unix timestamp from server
+            None if topic has no messages
+        """
