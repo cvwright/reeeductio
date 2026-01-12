@@ -61,6 +61,21 @@ def temp_blob_dir():
     # Cleanup
     shutil.rmtree(blob_dir)
 
+#region Utils
+
+@pytest.fixture
+def crypto():
+    """Create a CryptoUtils instance"""
+    return CryptoUtils()
+
+
+@pytest.fixture
+def authz(state_store, crypto):
+    """Create an AuthorizationEngine instance"""
+    return AuthorizationEngine(state_store, crypto)
+
+
+#region Stores
 
 @pytest.fixture
 def message_store(temp_db_path):
@@ -73,21 +88,11 @@ def state_store(temp_db_path):
     """Create a SqliteDataStore instance with temporary storage"""
     return SqliteDataStore(temp_db_path)
 
+
 @pytest.fixture
 def sqlite_state_store(temp_db_path):
     """Create a SqliteDataStore instance with temporary storage"""
     return SqliteDataStore(temp_db_path)
-
-@pytest.fixture
-def crypto():
-    """Create a CryptoUtils instance"""
-    return CryptoUtils()
-
-
-@pytest.fixture
-def authz(state_store, crypto):
-    """Create an AuthorizationEngine instance"""
-    return AuthorizationEngine(state_store, crypto)
 
 
 @pytest.fixture
@@ -115,6 +120,8 @@ def any_blob_store(request, temp_blob_dir, temp_db_path):
     else:
         raise ValueError(f"Unknown blob store type: {request.param}")
 
+
+#region Keypairs
 
 @pytest.fixture
 def admin_keypair():
@@ -150,8 +157,21 @@ def user_keypair():
         'id': user_id
     }
 
+#region Spaces
 
-def sign_state_entry(
+@pytest.fixture
+def unique_space_id(request):
+    """
+    Generate a unique space ID for each test to avoid conflicts.
+
+    Uses the test name to ensure uniqueness.
+    """
+    return f"test-{request.node.name}"
+
+
+#region Helper Functions
+
+def sign_data_entry(
     space_id: str,
     path: str,
     data: str,
@@ -195,8 +215,8 @@ def sign_state_entry(
     return signature
 
 
-def sign_and_store_state(
-    state_store,
+def sign_and_store_data(
+    data_store,
     space_id: str,
     path: str,
     contents: object,
@@ -223,7 +243,7 @@ def sign_and_store_state(
     """
     data_b64 = base64.b64encode(json.dumps(contents).encode()).decode()
 
-    signature = sign_state_entry(
+    signature = sign_data_entry(
         space_id,
         path,
         data_b64,
@@ -232,9 +252,9 @@ def sign_and_store_state(
         signed_at
     )
 
-    print(f"Saving signed state in {path}")
+    print(f"Saving signed data in {path}")
 
-    state_store.set_state(
+    data_store.set_data(
         space_id,
         path,
         data_b64,
@@ -279,6 +299,7 @@ def set_space_state(space, path, contents, token, keypair):
         # Call async function from sync context
         return asyncio.run(space.set_state(path, prev_hash, data, message_hash, signature, token))
 
+#region Firestore
 # ============================================================================
 # Firestore Emulator Fixtures
 # ============================================================================
@@ -395,16 +416,6 @@ def _delete_collection(coll_ref, batch_size: int = 100):
     # Continue if there might be more documents
     if deleted >= batch_size:
         return _delete_collection(coll_ref, batch_size)
-
-
-@pytest.fixture
-def unique_space_id(request):
-    """
-    Generate a unique space ID for each test to avoid conflicts.
-
-    Uses the test name to ensure uniqueness.
-    """
-    return f"test-{request.node.name}"
 
 
 @pytest.fixture
