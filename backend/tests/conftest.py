@@ -8,6 +8,7 @@ import shutil
 import base64
 import json
 import time
+import secrets
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -16,12 +17,14 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from sqlite_message_store import SqliteMessageStore
+from event_sourced_state_store import EventSourcedStateStore
 from sqlite_data_store import SqliteDataStore
 from crypto import CryptoUtils
 from authorization import AuthorizationEngine
 from identifiers import encode_space_id, encode_user_id
 from filesystem_blob_store import FilesystemBlobStore
 from sqlite_blob_store import SqliteBlobStore
+from space import Space
 
 
 # ============================================================================
@@ -82,15 +85,19 @@ def message_store(temp_db_path):
     """Create a SqliteMessageStore instance with temporary storage"""
     return SqliteMessageStore(temp_db_path)
 
+@pytest.fixture
+def state_store(message_store):
+    """Create an EventSourcedStateStore from the message store"""
+    return EventSourcedStateStore(message_store)
 
 @pytest.fixture
-def state_store(temp_db_path):
+def data_store(temp_db_path):
     """Create a SqliteDataStore instance with temporary storage"""
     return SqliteDataStore(temp_db_path)
 
 
 @pytest.fixture
-def sqlite_state_store(temp_db_path):
+def sqlite_data_store(temp_db_path):
     """Create a SqliteDataStore instance with temporary storage"""
     return SqliteDataStore(temp_db_path)
 
@@ -160,16 +167,50 @@ def user_keypair():
 #region Spaces
 
 @pytest.fixture
-def unique_space_id(request):
+def unique_admin_keypair(request):
+    """
+    Generate a unique admin keypair for each test to avoid conflicts.
+
+    Uses the test name to ensure uniqueness by hashing it and deriving
+    an ed25519 keypair, then encoding the space ID from the public key.
+    """
+    msg_to_hash = f"test-{request.node.name}"
+    hash_bytes = CryptoUtils.sha256_hash_str(msg_to_hash)
+
+    # Derive an ed25519 private key from the hash (use first 32 bytes)
+    private_key = ed25519.Ed25519PrivateKey.from_private_bytes(hash_bytes[:32])
+    
+    public_key = private_key.public_key()
+    public_key_bytes = public_key.public_bytes_raw()
+    user_id = encode_user_id(public_key_bytes)
+
+    return {
+        'private': private_key,
+        'public': public_key,
+        'public_bytes': public_key_bytes,
+        'user_id': user_id,
+        'space_id': encode_space_id(public_key_bytes),
+        'id': user_id
+    }
+
+@pytest.fixture
+def unique_space_id(unique_admin_keypair):
     """
     Generate a unique space ID for each test to avoid conflicts.
-
-    Uses the test name to ensure uniqueness.
     """
-    return f"test-{request.node.name}"
+    return unique_admin_keypair['space_id']
+
+@pytest.fixture
+def unique_space(unique_admin_keypair, message_store, data_store):
+    space_id = unique_admin_keypair['space_id']
+    secret = base64.b64encode(CryptoUtils.sha256_hash_str("test secret")).decode('utf-8')
+    space = Space(space_id, message_store, data_store, None, secret)
+    return space
 
 
+############################################################
 #region Helper Functions
+############################################################
 
 def sign_data_entry(
     space_id: str,
@@ -225,12 +266,12 @@ def sign_and_store_data(
     signed_at: int
 ) -> None:
     """
-    Convenience function to create a signed state entry and store it in the state store.
+    Convenience function to create a signed data entry and store it in the data store.
 
-    This combines create_signed_state_entry() and state_store.set_state() into a single call.
+    This combines create_signed_data_entry() and data_store.set_data() into a single call.
 
     Args:
-        state_store: DataStore instance to store the entry in
+        data_store: DataStore instance to store the entry in
         space_id: Space identifier
         path: State path
         contents: JSON-compatible object
@@ -295,9 +336,26 @@ def set_space_state(space, path, contents, token, keypair):
         message_bytes = message_tid.to_bytes()
         signature_bytes = keypair['private'].sign(message_bytes)
         signature = crypto.base64_encode(signature_bytes)
+        print(f"Saving state at {path} with signature {signature}")
 
         # Call async function from sync context
         return asyncio.run(space.set_state(path, prev_hash, data, message_hash, signature, token))
+
+
+def authenticate_with_challenge(space, user_id, private_key):
+    """Helper to do full challenge/verify/JWT flow and return token"""
+    challenge_response = space.create_challenge(user_id)
+    challenge = challenge_response['challenge']
+
+    message = challenge.encode('utf-8')
+    signature = private_key.sign(message)
+    signature_b64 = base64.b64encode(signature).decode()
+
+    space.verify_challenge(user_id, challenge, signature_b64)
+
+    token_response = space.create_jwt(user_id)
+    return token_response['token']
+
 
 #region Firestore
 # ============================================================================

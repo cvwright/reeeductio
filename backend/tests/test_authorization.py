@@ -11,9 +11,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import conftest
-sign_state_entry = conftest.sign_state_entry
-sign_and_store_state = conftest.sign_and_store_state
-
+sign_data_entry = conftest.sign_data_entry
+sign_and_store_data = conftest.sign_and_store_data
+authenticate_with_challenge = conftest.authenticate_with_challenge
+set_space_state = conftest.set_space_state
 
 def test_space_creator_god_mode(authz, admin_keypair):
     """Test that space creator has god mode permissions"""
@@ -23,60 +24,56 @@ def test_space_creator_god_mode(authz, admin_keypair):
     assert authz.check_permission(space_id, admin_id, "write", "anything")
 
 
-def test_granted_capability(state_store, authz, crypto, admin_keypair, user_keypair):
+def test_granted_capability(unique_space, unique_admin_keypair, user_keypair):
     """Test that users can use granted capabilities"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
 
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Add the user to the space
-    user_info = {
-        "user_id": user_id
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    print("Adding user to the space")
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
-        contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "user_id": user_id
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
-    object_path = "test/alice"
-    # Create something at the path
-    object_contents = {
-        "name": "Alice",
-        "sizes": ["regular", "big", "small"]
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
-        path=object_path,
-        contents=object_contents,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+    # Create something in the state
+    print("Creating test/alice state entry")
+    set_space_state(
+        space=unique_space,
+        path="test/alice",
+        contents={
+            "name": "Alice",
+            "sizes": ["regular", "big", "small"]
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Create a capability for user (read permission for everything)
-    capability = {
-        "op": "read",
-        "path": "{...}"  # {...} matches everything at any depth
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    print("Granting user read access to ...")
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}/rights/read_all",
-        contents=capability,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "op": "read",
+            "path": "{...}"  # {...} matches everything at any depth
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Test user now has read permission
-    assert authz.check_permission(space_id, user_id, "read", "test/alice")
+    print("Checking permissions")
+    assert unique_space.authz.check_permission(space_id, user_id, "read", "test/alice")
 
 
 def test_ungranted_capability_rejection(authz, admin_keypair, user_keypair):
@@ -163,140 +160,128 @@ def test_privilege_escalation_prevention(authz):
     assert not authz._has_capability_superset(granter_caps, requested_caps)
 
 
-def test_modify_capability(state_store, authz, admin_keypair, user_keypair):
+def test_modify_capability(unique_space, unique_admin_keypair, user_keypair):
     """Test that modify capability works correctly"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
 
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Add the user to the space
-    user_info = {
-        "user_id": user_id
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
-        contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "user_id": user_id
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Grant user modify permission on test/* path
-    capability = {
-        "op": "modify",
-        "path": "test/{...}"
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}/rights/modify_test",
-        contents=capability,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "op": "modify",
+            "path": "test/{...}"
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # User should have modify permission
-    assert authz.check_permission(space_id, user_id, "modify", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "modify", "test/data")
 
     # User should NOT have create permission (modify doesn't grant create)
-    assert not authz.check_permission(space_id, user_id, "create", "test/data")
+    assert not unique_space.authz.check_permission(space_id, user_id, "create", "test/data")
 
     # User should NOT have delete permission (modify doesn't grant delete)
-    assert not authz.check_permission(space_id, user_id, "delete", "test/data")
+    assert not unique_space.authz.check_permission(space_id, user_id, "delete", "test/data")
 
 
-def test_delete_capability(state_store, authz, admin_keypair, user_keypair):
+def test_delete_capability(unique_space, unique_admin_keypair, user_keypair):
     """Test that delete capability works correctly"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
 
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Add the user to the space
-    user_info = {
-        "user_id": user_id
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
-        contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "user_id": user_id
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Grant user delete permission on test/* path
-    capability = {
-        "op": "delete",
-        "path": "test/{...}"
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}/rights/delete_test",
-        contents=capability,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "op": "delete",
+            "path": "test/{...}"
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # User should have delete permission
-    assert authz.check_permission(space_id, user_id, "delete", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "delete", "test/data")
 
     # User should NOT have create permission (delete doesn't grant create)
-    assert not authz.check_permission(space_id, user_id, "create", "test/data")
+    assert not unique_space.authz.check_permission(space_id, user_id, "create", "test/data")
 
     # User should NOT have modify permission (delete doesn't grant modify)
-    assert not authz.check_permission(space_id, user_id, "modify", "test/data")
+    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "test/data")
 
 
-def test_write_grants_all_operations(state_store, authz, admin_keypair, user_keypair):
+def test_write_grants_all_operations(unique_space, unique_admin_keypair, user_keypair):
     """Test that write capability grants create, modify, delete, and read"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
 
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Add the user to the space
-    user_info = {
-        "user_id": user_id
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
-        contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "user_id": user_id
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Grant user write permission
-    capability = {
-        "op": "write",
-        "path": "test/{...}"
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}/rights/write_test",
-        contents=capability,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "op": "write",
+            "path": "test/{...}"
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Write should grant all operations
-    assert authz.check_permission(space_id, user_id, "read", "test/data")
-    assert authz.check_permission(space_id, user_id, "create", "test/data")
-    assert authz.check_permission(space_id, user_id, "modify", "test/data")
-    assert authz.check_permission(space_id, user_id, "delete", "test/data")
-    assert authz.check_permission(space_id, user_id, "write", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "read", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "create", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "modify", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "delete", "test/data")
+    assert unique_space.authz.check_permission(space_id, user_id, "write", "test/data")
 
 
 def test_modify_delete_independence(authz):
@@ -361,217 +346,242 @@ def test_write_dominates_all_operations(authz):
     assert authz._has_capability_superset(granter_caps, requested_caps)
 
 
-def test_owned_modify_capability(state_store, authz, admin_keypair, user_keypair):
+def test_owned_modify_capability(unique_space, unique_admin_keypair, user_keypair):
     """Test that must_be_owner=true restricts modify to owned objects"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
     user_private = user_keypair['private']
 
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Add the user to the space
-    user_info = {"user_id": user_id}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    print("Adding user to the space")
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
-        contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "user_id": user_id
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
+    )
+
+    # Grant user (non-owner-restricted) create permission
+    print("Granting user create permission")
+    set_space_state(
+        space=unique_space,
+        path=f"auth/users/{user_id}/rights/create_docs",
+        contents={
+            "op": "create",
+            "path": "docs/{...}",
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Grant user ownership-restricted modify permission
-    capability = {
-        "op": "modify",
-        "path": "docs/{...}",
-        "must_be_owner": True
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
-        path=f"auth/users/{user_id}/rights/modify_owned",
-        contents=capability,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+    print("Granting user modify permission")
+    set_space_state(
+        space=unique_space,
+        path=f"auth/users/{user_id}/rights/modify_owned_docs",
+        contents={
+            "op": "modify",
+            "path": "docs/{...}",
+            "must_be_owner": True
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
+    # Authenticate the user to create their own document
+    user_token = authenticate_with_challenge(unique_space, user_id, user_private)
+
     # Create a document owned by the user
-    user_doc = {"title": "User's document"}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    print("Creating document owned by user")
+    set_space_state(
+        space=unique_space,
         path="docs/user_doc",
-        contents=user_doc,
-        signer_private_key=user_private,
-        signer_user_id=user_id,
-        signed_at=12346000
+        contents={
+            "title": "User's document"
+        },
+        token=user_token,
+        keypair=user_keypair
     )
 
     # Create a document owned by admin
-    admin_doc = {"title": "Admin's document"}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    print("Creating document owned by admin")
+    set_space_state(
+        space=unique_space,
         path="docs/admin_doc",
-        contents=admin_doc,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12346000
+        contents={
+            "title": "Admin's document"
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # User should be able to modify their own document
-    assert authz.check_permission(space_id, user_id, "modify", "docs/user_doc")
+    print("Checking access to user's doc")
+    assert unique_space.authz.check_permission(space_id, user_id, "modify", "docs/user_doc")
 
     # User should NOT be able to modify admin's document
-    assert not authz.check_permission(space_id, user_id, "modify", "docs/admin_doc")
+    print("Checking access to admin's doc")
+    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "docs/admin_doc")
 
 
-def test_owned_delete_capability(state_store, authz, admin_keypair, user_keypair):
+def test_owned_delete_capability(unique_space, unique_admin_keypair, user_keypair):
     """Test that must_be_owner=true restricts delete to owned objects"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
     user_private = user_keypair['private']
 
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Add the user to the space
-    user_info = {"user_id": user_id}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
-        contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "user_id": user_id
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
+    )
+
+    # Grant user create permission
+    set_space_state(
+        space=unique_space,
+        path=f"auth/users/{user_id}/rights/create_files",
+        contents={
+            "op": "create",
+            "path": "files/{...}"
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Grant user ownership-restricted delete permission
-    capability = {
-        "op": "delete",
-        "path": "files/{...}",
-        "must_be_owner": True
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}/rights/delete_owned",
-        contents=capability,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "op": "delete",
+            "path": "files/{...}",
+            "must_be_owner": True
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
+    # Authenticate the user to create their own file
+    user_token = authenticate_with_challenge(unique_space, user_id, user_private)
+
     # Create a file owned by the user
-    user_file = {"name": "user_file.txt"}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path="files/user_file",
-        contents=user_file,
-        signer_private_key=user_private,
-        signer_user_id=user_id,
-        signed_at=12346000
+        contents={
+            "name": "user_file.txt"
+        },
+        token=user_token,
+        keypair=user_keypair
     )
 
     # Create a file owned by admin
-    admin_file = {"name": "admin_file.txt"}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path="files/admin_file",
-        contents=admin_file,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12346000
+        contents={
+            "name": "admin_file.txt"
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # User should be able to delete their own file
-    assert authz.check_permission(space_id, user_id, "delete", "files/user_file")
+    assert unique_space.authz.check_permission(space_id, user_id, "delete", "files/user_file")
 
     # User should NOT be able to delete admin's file
-    assert not authz.check_permission(space_id, user_id, "delete", "files/admin_file")
+    assert not unique_space.authz.check_permission(space_id, user_id, "delete", "files/admin_file")
 
 
-def test_owned_create_always_allowed(state_store, authz, admin_keypair, user_keypair):
+def test_owned_create_always_allowed(unique_space, unique_admin_keypair, user_keypair):
     """Test that must_be_owner=true doesn't restrict create operations"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
 
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Add the user to the space
-    user_info = {"user_id": user_id}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
-        contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "user_id": user_id
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Grant user ownership-restricted create permission
-    capability = {
-        "op": "create",
-        "path": "posts/{...}",
-        "must_be_owner": True  # Should be ignored for create
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}/rights/create_owned",
-        contents=capability,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "op": "create",
+            "path": "posts/{...}",
+            "must_be_owner": True  # Should be ignored for create
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # User should be able to create (ownership check skipped for create)
-    assert authz.check_permission(space_id, user_id, "create", "posts/new_post")
+    assert unique_space.authz.check_permission(space_id, user_id, "create", "posts/new_post")
 
 
-def test_owned_nonexistent_entry(state_store, authz, admin_keypair, user_keypair):
+def test_owned_nonexistent_entry(unique_space, unique_admin_keypair, user_keypair):
     """Test that must_be_owner=true denies access to non-existent entries"""
-    space_id = admin_keypair['space_id']
-    admin_id = admin_keypair['user_id']
-    admin_private = admin_keypair['private']
+    space_id = unique_admin_keypair['space_id']
+    admin_id = unique_admin_keypair['user_id']
+    admin_private = unique_admin_keypair['private']
     user_id = user_keypair['user_id']
 
+    admin_token = authenticate_with_challenge(unique_space, admin_id, admin_private)
+
     # Add the user to the space
-    user_info = {"user_id": user_id}
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}",
-        contents=user_info,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "user_id": user_id
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # Grant user ownership-restricted modify permission
-    capability = {
-        "op": "modify",
-        "path": "items/{...}",
-        "must_be_owner": True
-    }
-    sign_and_store_state(
-        state_store=state_store,
-        space_id=space_id,
+    set_space_state(
+        space=unique_space,
         path=f"auth/users/{user_id}/rights/modify_owned_items",
-        contents=capability,
-        signer_private_key=admin_private,
-        signer_user_id=admin_id,
-        signed_at=12345000
+        contents={
+            "op": "modify",
+            "path": "items/{...}",
+            "must_be_owner": True
+        },
+        token=admin_token,
+        keypair=unique_admin_keypair
     )
 
     # User should NOT be able to modify non-existent entry
     # (no entry exists, so can't verify ownership)
-    assert not authz.check_permission(space_id, user_id, "modify", "items/nonexistent")
+    assert not unique_space.authz.check_permission(space_id, user_id, "modify", "items/nonexistent")
 
 
 def test_ownership_dominance_unrestricted_over_restricted(authz):

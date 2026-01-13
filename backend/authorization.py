@@ -60,35 +60,51 @@ class AuthorizationEngine:
         state_entry: Dict[str, Any]
     ) -> bool:
         """
-        Verify the signature on a state entry.
+        Verify the signature on a state entry (message).
 
-        All state entries must be cryptographically signed. This verifies that
-        the state entry's signature is valid.
+        State entries are messages on the "state" topic. They have the message structure:
+        - message_hash: The typed identifier for this message
+        - type: The state path (e.g., "auth/users/U_xxx/rights/cap1")
+        - sender: The user or tool who sent the message
+        - signature: The signature over the message_hash
+        - data: Base64-encoded JSON data
+        - server_timestamp: When the message was received
 
         Args:
-            space_id: Space identifier
-            state_entry: State entry dict with path, data, signature, signed_by, signed_at
+            state_entry: Message dict from the state topic
 
         Returns:
             True if signature is valid
         """
-        required_fields = ["path", "data", "signature", "signed_by", "signed_at"]
+        required_fields = ["message_hash", "prev_hash", "type", "sender", "signature", "data", "server_timestamp"]
         if not all(field in state_entry for field in required_fields):
+            return False
+        
+        # Verify the message hash
+        expected_hash = self.crypto.compute_message_hash(
+            space_id,
+            "state",
+            state_entry["prev_hash"],
+            state_entry["data"],
+            state_entry["sender"]
+        )
+        if expected_hash != state_entry["message_hash"]:
+            print("Message hash does not match")
             return False
 
         try:
-            # Reconstruct the message that was signed: space_id|path|data|signed_at
-            message_to_sign = '|'.join([
-                space_id,
-                state_entry["path"],
-                state_entry["data"],
-                str(state_entry["signed_at"])
-            ]).encode('utf-8')
+            # Extract sender's public key
+            sender_public_key = extract_public_key(state_entry["sender"])
 
-            signature_bytes = self.crypto.base64_decode(state_entry["signature"])
-            signer_public_key = extract_public_key(state_entry["signed_by"])
+            # Decode signature
+            signature_bytes = base64.b64decode(state_entry["signature"])
 
-            return self.crypto.verify_signature(message_to_sign, signature_bytes, signer_public_key)
+            # Verify signature over message hash (typed identifier)
+            return self.crypto.verify_message_signature(
+                message_hash=state_entry["message_hash"],
+                signature=signature_bytes,
+                sender_public_key=sender_public_key
+            )
         except Exception as e:
             print(f"State entry signature verification failed: {e}")
             return False
@@ -115,6 +131,9 @@ class AuthorizationEngine:
         Returns:
             True if user/tool has permission
         """
+
+        print(f"Checking permisson for {operation} on path {state_path}")
+
         # Tools have NO ambient authority - they can only use explicit capabilities
         if self._is_tool(member_id):
             # Load tool capabilities only
@@ -146,10 +165,11 @@ class AuthorizationEngine:
 
         # Load capabilities inherited from roles
         role_capabilities = self._load_role_capabilities(space_id, member_id)
-        print(f"Found {len(role_capabilities)} capabilities for user {member_id}")
+        print(f"Found {len(role_capabilities)} role capabilities for user {member_id}")
 
         # Combine all capabilities
         all_capabilities = capabilities + role_capabilities
+        print(f"Found {len(all_capabilities)} total capabilities")
 
         # Check if any capability grants permission (with ownership check)
         for cap in all_capabilities:
@@ -188,6 +208,7 @@ class AuthorizationEngine:
         """
         # First check path and operation (cheap)
         if not self._capability_grants_permission(capability, operation, state_path, member_id):
+            print(f"Capability {capability['op']}: {capability['path']} does not grant {operation} on {state_path}")
             return False
 
         # Path and operation match! Now check ownership if needed
@@ -195,12 +216,14 @@ class AuthorizationEngine:
 
         if not must_be_owner:
             # Non-ownership-restricted capability grants access immediately
+            print(f"Non-restricted capability grants {operation} to {state_path}")
             return True
 
         # Ownership-restricted capability - need to verify ownership
         # Special case: create operations are always allowed
         # (you'll become the owner when you create it)
         if operation == "create":
+            print(f"create does not require ownership")
             return True
 
         # For other operations, verify ownership via state entry lookup
@@ -209,10 +232,11 @@ class AuthorizationEngine:
 
         if not state_entry:
             # No entry exists, so you can't own it
+            print(f"State entry doesn't exist, non-create capability cannot grant access")
             return False
 
         # Check if member owns this entry
-        return state_entry.get("signed_by") == member_id
+        return state_entry.get("sender") == member_id
     
     def _load_user_capabilities(
         self,
@@ -250,7 +274,7 @@ class AuthorizationEngine:
             # SECURITY: Verify the signer has a valid chain of trust
             signed_by = state.get("signed_by")
             if signed_by and not self.verify_chain_of_trust(space_id, signed_by):
-                print(f"Capability at {state.get('path')} signed by untrusted key {signed_by}")
+                print(f"Capability at {state.get('type')} signed by untrusted key {signed_by}")
                 continue
 
             # Decode base64 data and parse JSON
@@ -995,9 +1019,9 @@ class AuthorizationEngine:
             return False
 
         # Get who signed this member's entry
-        signed_by = member_entry.get("signed_by")
+        signed_by = member_entry.get("sender")
         if not signed_by:
-            print(f"Chain validation failed: No signed_by field in {member_path}")
+            print(f"Chain validation failed: No sender field in {member_path}")
             return False
 
         # Recursively verify the signer's chain

@@ -526,7 +526,8 @@ class Space:
         should_track_usage = self._check_tool_limit(sender)
 
         # Check create permission
-        if not self.check_permission(sender, "create", f"topics/{topic_id}/messages/"):
+        # state topic is special - Doesn't require topic permission to send
+        if topic_id != "state" and not self.check_permission(sender, "create", f"topics/{topic_id}/messages/"):
             raise ValueError("No post permission")
 
         # Validate message hash

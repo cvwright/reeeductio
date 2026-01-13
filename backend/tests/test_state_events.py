@@ -9,21 +9,18 @@ import base64
 import json
 import hashlib
 import pytest
+import sys
+from pathlib import Path
 
 from space import Space
-from tests.conftest import sign_state_entry, sign_and_store_state
 
+# Add tests directory to path to import conftest
+sys.path.insert(0, str(Path(__file__).parent))
 
-@pytest.fixture
-def space(temp_db_path, admin_keypair, message_store, state_store):
-    """Create a Space instance for testing"""
-    return Space(
-        space_id=admin_keypair['space_id'],
-        state_store=state_store,
-        message_store=message_store,
-        jwt_secret="test-secret"
-    )
-
+import conftest
+sign_data_entry = conftest.sign_data_entry
+sign_and_store_data = conftest.sign_and_store_data
+set_space_state = conftest.set_space_state
 
 def test_state_set_dual_write(space, message_store, state_store, admin_keypair):
     """Test that setting state writes to both state table and state topic"""
