@@ -23,17 +23,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import conftest
-sign_state_entry = conftest.sign_state_entry
-sign_and_store_state = conftest.sign_and_store_state
+sign_data_entry = conftest.sign_data_entry
+sign_and_store_data = conftest.sign_and_store_data
 
 # Import generic test functions
-from .test_state_storage import (
-    generic_state_set_and_get,
-    generic_state_update,
-    generic_state_delete,
-    generic_state_list_by_prefix,
-    generic_state_nonexistent,
-    generic_state_multiple_spaces,
+from .test_data_storage import (
+    generic_data_set_and_get,
+    generic_data_update,
+    generic_data_delete,
+    generic_data_list_by_prefix,
+    generic_data_nonexistent,
+    generic_data_multiple_spaces,
 )
 from .test_message_storage import (
     generic_message_add_and_get,
@@ -53,32 +53,32 @@ from .test_message_storage import (
 
 def test_state_set_and_get(firestore_state_store, unique_space_id, admin_keypair):
     """Test basic state set and get operations"""
-    generic_state_set_and_get(firestore_state_store, unique_space_id, admin_keypair)
+    generic_data_set_and_get(firestore_state_store, unique_space_id, admin_keypair)
 
 
 def test_state_update(firestore_state_store, unique_space_id, admin_keypair, user_keypair):
     """Test updating existing state"""
-    generic_state_update(firestore_state_store, unique_space_id, admin_keypair, user_keypair)
+    generic_data_update(firestore_state_store, unique_space_id, admin_keypair, user_keypair)
 
 
 def test_state_delete(firestore_state_store, unique_space_id, admin_keypair):
     """Test state deletion"""
-    generic_state_delete(firestore_state_store, unique_space_id, admin_keypair)
+    generic_data_delete(firestore_state_store, unique_space_id, admin_keypair)
 
 
 def test_state_list_by_prefix(firestore_state_store, unique_space_id, admin_keypair):
     """Test listing state by prefix"""
-    generic_state_list_by_prefix(firestore_state_store, unique_space_id, admin_keypair)
+    generic_data_list_by_prefix(firestore_state_store, unique_space_id, admin_keypair)
 
 
 def test_state_nonexistent(firestore_state_store, unique_space_id):
     """Test getting nonexistent state returns None"""
-    generic_state_nonexistent(firestore_state_store, unique_space_id)
+    generic_data_nonexistent(firestore_state_store, unique_space_id)
 
 
 def test_state_multiple_spaces(firestore_state_store, unique_space_id, admin_keypair):
     """Test state isolation between spaces"""
-    generic_state_multiple_spaces(firestore_state_store, unique_space_id, admin_keypair)
+    generic_data_multiple_spaces(firestore_state_store, unique_space_id, admin_keypair)
 
 
 # ============================================================================
