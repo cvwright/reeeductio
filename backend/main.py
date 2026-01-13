@@ -68,7 +68,7 @@ else:
     raise ValueError(f"Unsupported blob store type: {config.blob_store.type}")
 
 # Initialize store factories based on database config
-state_store_factory = None
+data_store_factory = None
 message_store_factory = None
 
 if isinstance(config.database, FirestoreDatabaseConfig):
@@ -77,7 +77,7 @@ if isinstance(config.database, FirestoreDatabaseConfig):
     database_id = config.database.database_id
     logger.info(f"Using Firestore database: project={project_id}, database={database_id}")
 
-    state_store_factory = lambda: FirestoreDataStore(project_id, database_id)
+    data_store_factory = lambda: FirestoreDataStore(project_id, database_id)
     message_store_factory = lambda: FirestoreMessageStore(project_id, database_id)
 else:
     logger.info("Using SQLite database (per-space stores)")
@@ -88,7 +88,7 @@ logger.info("Initializing space manager")
 space_manager = SpaceManager(
     base_storage_dir="spaces",
     max_cached_spaces=1000,
-    state_store_factory=state_store_factory,
+    data_store_factory=data_store_factory,
     message_store_factory=message_store_factory,
     blob_store=blob_store,
     jwt_secret=JWT_SECRET,

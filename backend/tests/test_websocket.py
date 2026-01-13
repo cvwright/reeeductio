@@ -17,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from main import app, authenticate_websocket, space_manager
 
 import conftest
-sign_state_entry = conftest.sign_state_entry
-sign_and_store_state = conftest.sign_and_store_state
+set_space_state = conftest.set_space_state
+authenticate_with_challenge = conftest.authenticate_with_challenge
 
 class TestWebSocketAuthentication:
     """Test WebSocket authentication"""
@@ -95,27 +95,30 @@ class TestWebSocketEndpoint:
             ):
                 pass
 
-    def test_websocket_connect_success(self, client, admin_keypair, state_store):
+    def test_websocket_connect_success(self, client, admin_keypair):
         """Test successful WebSocket connection"""
         space_id = admin_keypair['space_id']
         user_id = admin_keypair['user_id']
+        admin_private = admin_keypair['private']
 
-        # Add user as member
+        # Get space
+        space = space_manager.get_space(space_id)
+
+        # Authenticate and add user as member
+        admin_token = authenticate_with_challenge(space, user_id, admin_private)
+
         member_data = {
             "user_id": user_id
         }
-        sign_and_store_state(
-            state_store=state_store,
-            space_id=space_id,
+        set_space_state(
+            space=space,
             path=f"auth/users/{user_id}",
             contents=member_data,
-            signer_private_key=admin_keypair['private'],
-            signer_user_id=admin_keypair['user_id'],
-            signed_at=12345000
+            token=admin_token,
+            keypair=admin_keypair
         )
 
         # Create JWT token
-        space = space_manager.get_space(space_id)
         jwt_data = space.create_jwt(user_id)
         token = jwt_data['token']
 
@@ -130,27 +133,30 @@ class TestWebSocketEndpoint:
             data = websocket.receive_text()
             assert data == "pong"
 
-    def test_websocket_receives_broadcast(self, client, admin_keypair, state_store):
+    def test_websocket_receives_broadcast(self, client, admin_keypair):
         """Test WebSocket receives broadcast messages"""
         space_id = admin_keypair['space_id']
         user_id = admin_keypair['user_id']
+        admin_private = admin_keypair['private']
 
-        # Add user as member
+        # Get space
+        space = space_manager.get_space(space_id)
+
+        # Authenticate and add user as member
+        admin_token = authenticate_with_challenge(space, user_id, admin_private)
+
         member_data = {
             "user_id": user_id
         }
-        sign_and_store_state(
-            state_store=state_store,
-            space_id=space_id,
+        set_space_state(
+            space=space,
             path=f"auth/users/{user_id}",
             contents=member_data,
-            signer_private_key=admin_keypair['private'],
-            signer_user_id=admin_keypair['user_id'],
-            signed_at=12345000
+            token=admin_token,
+            keypair=admin_keypair
         )
 
         # Create JWT token
-        space = space_manager.get_space(space_id)
         jwt_data = space.create_jwt(user_id)
         token = jwt_data['token']
 
@@ -187,7 +193,7 @@ class TestWebSocketMessageBroadcasting:
 
     @pytest.mark.asyncio
     async def test_post_message_broadcasts_to_websockets(
-        self, message_store, state_store, crypto, authz, admin_keypair
+        self, message_store, data_store, crypto, authz, admin_keypair
     ):
         """Test that posting a message broadcasts to WebSocket clients"""
         space_id = admin_keypair['space_id']
@@ -218,7 +224,7 @@ class TestWebSocketMessageBroadcasting:
             space_id=space_id,
             topic_id=topic_id,
             message_hash=msg_hash,
-        msg_type="chat.text",
+            msg_type="chat.text",
             prev_hash=None,
             data=data,
             sender=admin_id,
