@@ -2,7 +2,7 @@
 Tests for Firestore storage implementations
 
 These tests run against the Firestore emulator and use the generic test
-functions from test_state_storage.py and test_message_storage.py.
+functions from test_data_storage.py and test_message_storage.py.
 
 Run tests:
     # Automatic mode (uses testcontainers if available)
@@ -51,34 +51,34 @@ from .test_message_storage import (
 # State Storage Tests
 # ============================================================================
 
-def test_state_set_and_get(firestore_state_store, unique_space_id, admin_keypair):
+def test_data_set_and_get(firestore_data_store, unique_space_id, admin_keypair):
     """Test basic state set and get operations"""
-    generic_data_set_and_get(firestore_state_store, unique_space_id, admin_keypair)
+    generic_data_set_and_get(firestore_data_store, unique_space_id, admin_keypair)
 
 
-def test_state_update(firestore_state_store, unique_space_id, admin_keypair, user_keypair):
+def test_data_update(firestore_data_store, unique_space_id, admin_keypair, user_keypair):
     """Test updating existing state"""
-    generic_data_update(firestore_state_store, unique_space_id, admin_keypair, user_keypair)
+    generic_data_update(firestore_data_store, unique_space_id, admin_keypair, user_keypair)
 
 
-def test_state_delete(firestore_state_store, unique_space_id, admin_keypair):
+def test_data_delete(firestore_data_store, unique_space_id, admin_keypair):
     """Test state deletion"""
-    generic_data_delete(firestore_state_store, unique_space_id, admin_keypair)
+    generic_data_delete(firestore_data_store, unique_space_id, admin_keypair)
 
 
-def test_state_list_by_prefix(firestore_state_store, unique_space_id, admin_keypair):
+def test_data_list_by_prefix(firestore_data_store, unique_space_id, admin_keypair):
     """Test listing state by prefix"""
-    generic_data_list_by_prefix(firestore_state_store, unique_space_id, admin_keypair)
+    generic_data_list_by_prefix(firestore_data_store, unique_space_id, admin_keypair)
 
 
-def test_state_nonexistent(firestore_state_store, unique_space_id):
+def test_data_nonexistent(firestore_data_store, unique_space_id):
     """Test getting nonexistent state returns None"""
-    generic_data_nonexistent(firestore_state_store, unique_space_id)
+    generic_data_nonexistent(firestore_data_store, unique_space_id)
 
 
-def test_state_multiple_spaces(firestore_state_store, unique_space_id, admin_keypair):
+def test_data_multiple_spaces(firestore_data_store, unique_space_id, admin_keypair):
     """Test state isolation between spaces"""
-    generic_data_multiple_spaces(firestore_state_store, unique_space_id, admin_keypair)
+    generic_data_multiple_spaces(firestore_data_store, unique_space_id, admin_keypair)
 
 
 # ============================================================================
