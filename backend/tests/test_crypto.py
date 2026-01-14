@@ -53,7 +53,7 @@ def test_message_hashing(crypto):
         "space1",
         "general-chat",
         None,
-        "encrypted_payload",
+        "data",
         sender_id
     )
 
@@ -73,7 +73,7 @@ def test_message_signature_verification(crypto):
         "space1",
         "general-chat",
         None,
-        "encrypted_payload",
+        "data",
         sender_id
     )
 

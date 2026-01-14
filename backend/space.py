@@ -14,13 +14,15 @@ from typing import Optional, List, Dict, Any, Set
 from fastapi import WebSocket
 import json
 
-from state_store import StateStore
+from data_store import DataStore
 from message_store import MessageStore
+from event_sourced_state_store import EventSourcedStateStore
 from crypto import CryptoUtils
 from blob_store import BlobStore
 from authorization import AuthorizationEngine
 from identifiers import extract_public_key
 from path_validation import validate_user_path, PathValidationError
+from exceptions import ChainConflictError
 import secrets
 import jwt
 
@@ -41,11 +43,12 @@ class Space:
     - Other frameworks
     """
 
+    #region init
     def __init__(
         self,
         space_id: str,
-        state_store: StateStore,
         message_store: MessageStore,
+        data_store: DataStore,
         blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
         jwt_algorithm: str = "HS256",
@@ -64,9 +67,10 @@ class Space:
             jwt_expiry_hours: JWT token expiry in hours
         """
         self.space_id = space_id
-        self.state_store = state_store
         self.message_store = message_store
+        self.data_store = data_store
         self.blob_store = blob_store
+        self.state_store = EventSourcedStateStore(message_store)
 
         # JWT configuration
         self.jwt_secret = jwt_secret
@@ -75,7 +79,12 @@ class Space:
 
         # Initialize crypto and authorization
         self.crypto = CryptoUtils()
-        self.authz = AuthorizationEngine(self.state_store, self.crypto)
+        self.authz = AuthorizationEngine(
+            self.state_store,
+            self.crypto,
+            blob_store=self.blob_store,
+            data_store=self.data_store
+        )
 
         # WebSocket connections for this space
         self.websockets: Set[WebSocket] = set()
@@ -84,6 +93,7 @@ class Space:
         # In production, store in Redis with TTL
         self.challenges: Dict[str, Dict[str, Any]] = {}
 
+    #region Authentication
     # ========================================================================
     # Authentication Operations
     # ========================================================================
@@ -278,6 +288,7 @@ class Space:
         """
         return self.verify_jwt(token)
 
+    #region State
     # ========================================================================
     # State Operations
     # ========================================================================
@@ -303,93 +314,54 @@ class Space:
         except PathValidationError as e:
             raise ValueError(f"Invalid path: {e}")
 
-        # Authenticate
+        # Authenticate the member of the space
+        # (member might be a user or a tool)
         member = self.authenticate_request(token)
 
-        # Check read permission
-        if not self.check_permission(member["id"], "read", path):
+        # Check read permission (use unified namespace: prefix with "state/")
+        if not self.check_permission(member["id"], "read", f"state/{path}"):
             raise ValueError("No read permission")
 
-        # Get state
-        state = self.state_store.get_state(self.space_id, path)
+        # Get state - In the event-sourced state model,
+        # the current state for `path` is the most recent
+        # message in topic "state" with type `path`
+        state = self.message_store.get_most_recent_message(
+            space_id=self.space_id,
+            topic_id="state",
+            type=path
+        )
         if state is None:
             raise ValueError("State not found")
 
         return state
 
-    def set_state(
+    def _check_state_operation(
         self,
         path: str,
         data: str,
-        token: str,
-        signature: str,
-        signed_by: str,
-        signed_at: int
-    ) -> int:
+        signed_by: str
+    ) -> None:
         """
-        Set state value with authentication and authorization.
+        Validate state-specific constraints before allowing a state message to be posted.
 
-        All state writes must be cryptographically signed. The signature is verified
-        before the state is stored.
+        This includes chain-of-trust verification, capability grant validation,
+        role grant validation, and tool creation verification.
 
         Args:
-            path: State path to set
+            path: State path being modified
             data: Base64-encoded state data
-            token: JWT authentication token
-            signature: Ed25519 signature over (path + data + signed_at) - REQUIRED
-            signed_by: Typed user/tool identifier of signer - REQUIRED
-            signed_at: Unix timestamp in milliseconds when entry was signed - REQUIRED
-
-        Returns:
-            Timestamp when state was updated (milliseconds)
+            signed_by: Typed identifier of the signer (user or tool)
 
         Raises:
-            ValueError: If auth fails, permission denied, validation fails, or signature invalid
-            PathValidationError: If path contains invalid characters or wildcards
+            ValueError: If validation fails
         """
-        # VALIDATE PATH FIRST - before authentication or authorization
-        # This prevents wildcard injection attacks
+        print("Checking state operation")
+
+        # Validate path
         try:
             validate_user_path(path)
         except PathValidationError as e:
             raise ValueError(f"Invalid path: {e}")
-
-        # Authenticate
-        member = self.authenticate_request(token)
-        member_id = member["id"]
-
-        # Check tool use limit BEFORE processing (returns True if usage should be tracked)
-        should_track_usage = self._check_tool_limit(member_id)
-
-        # Check if state already exists
-        existing = self.state_store.get_state(self.space_id, path)
-        operation = "write" if existing else "create"
-
-        # Check permission
-        if not self.check_permission(member_id, operation, path):
-            raise ValueError(f"No {operation} permission for path: {path}")
-
-        # Validate signature on state entry (REQUIRED for all state writes)
-        if not signature or not signed_by:
-            raise ValueError("Signature and signed_by are required for all state writes")
-
-        if signed_at is None:
-            raise ValueError("signed_at is required for all state writes")
-
-        # Verify signature over (space_id | path | data | signed_at)
-        # Including space_id prevents signature replay attacks across different spaces
-        # Using | as field separator prevents confusion attacks
-        message_to_sign = '|'.join([
-            self.space_id,
-            path,
-            data,
-            str(signed_at)
-        ]).encode('utf-8')
-        signature_bytes = self.crypto.base64_decode(signature)
-        signer_public_key = extract_public_key(signed_by)
-
-        if not self.crypto.verify_signature(message_to_sign, signature_bytes, signer_public_key):
-            raise ValueError("Invalid state entry signature")
 
         # CRITICAL SECURITY: Verify chain of trust for the signer
         # This prevents database tampering attacks where an adversary inserts
@@ -407,6 +379,7 @@ class Space:
 
         # For capability paths, validate capability structure
         if self.is_capability_path(path):
+            print("State operation is capability path")
             # Decode and validate capability
             import base64
             import json
@@ -421,6 +394,8 @@ class Space:
             if not self.verify_capability_grant(path, capability_dict, signed_by):
                 print("Capability grant verification failed")
                 raise ValueError("Invalid capability grant or privilege escalation")
+        else:
+            print("State operation is not capability grant")
 
         # For role grant paths, validate role grant structure
         if self.authz.is_role_grant_path(path):
@@ -448,6 +423,8 @@ class Space:
             # Verify the role grant (subset checking)
             if not self.authz.verify_role_grant(self.space_id, path, role_grant_dict, signed_by):
                 raise ValueError("Invalid role grant or privilege escalation")
+        else:
+            print("State operation is not role grant")
 
         # For user/tool creation, verify the creator has valid chain of trust
         # The new user/tool won't have a chain yet (we're creating it), but the
@@ -457,77 +434,68 @@ class Space:
             if not self.authz.verify_chain_of_trust(self.space_id, signed_by):
                 raise ValueError(f"Creator {signed_by} has invalid chain of trust - cannot create new members")
 
-        # Store state with signature
-        self.state_store.set_state(
-            self.space_id,
-            path,
-            data,
-            signature,
-            signed_by,
-            signed_at
-        )
-
-        # Invalidate chain cache when member entries are created or modified
-        # This ensures chain verification reflects the latest state
-        if is_member_creation:
-            # Extract member_id from path (auth/users/{id} or auth/tools/{id})
-            member_id = path.split('/')[2]
-            self.authz.invalidate_chain_cache(self.space_id, member_id)
-
-        # If creating a use-limited tool, initialize usage tracking
+        # Initialize tool usage tracking if creating a use-limited tool
+        # This should happen before the message is posted
         if path.startswith("auth/tools/") and path.count('/') == 2:
-            # This is a tool definition (not a capability under the tool)
             import base64
             import json
             try:
                 tool_def = json.loads(base64.b64decode(data))
                 if tool_def.get('use_limit') is not None:
-                    # Tool has use_limit, initialize tracking
                     tool_id = path.split('/')[-1]
-                    self.state_store.initialize_tool_usage(self.space_id, tool_id)
+                    self.message_store.initialize_tool_usage(self.space_id, tool_id)
             except Exception:
                 pass  # Invalid JSON, will be caught elsewhere
 
-        # Increment tool usage after successful write (only if tool has use_limit)
-        if should_track_usage:
-            self._increment_tool_usage(member_id)
-
-        return signed_at
-
-    def delete_state(self, path: str, token: str) -> None:
+    async def set_state(
+        self,
+        path: str,
+        prev_hash: Optional[str],
+        data: str,
+        message_hash: str,
+        signature: str,
+        token: str
+    ) -> int:
         """
-        Delete state value with authentication and authorization.
+        Set state value by posting a message to the "state" topic.
+
+        State is stored as messages with the state path in the "type" field.
+        This creates an immutable audit log of all state changes.
 
         Args:
-            path: State path to delete
+            path: State path to set (becomes the message "type")
+            prev_hash: Hash of previous message in state topic chain (None for first)
+            data: Base64-encoded state data
+            message_hash: SHA256 hash of the message (client-computed)
+            signature: Ed25519 signature over message_hash by sender
             token: JWT authentication token
 
+        Returns:
+            server_timestamp: Timestamp when state message was stored (milliseconds)
+
         Raises:
-            ValueError: If auth fails, permission denied, or state not found
+            ValueError: If auth fails, permission denied, validation fails, or chain conflict
             PathValidationError: If path contains invalid characters or wildcards
         """
-        # Validate path
-        try:
-            validate_user_path(path)
-        except PathValidationError as e:
-            raise ValueError(f"Invalid path: {e}")
-
-        # Authenticate
-        user = self.authenticate_request(token)
-        print("Got user = ", user)
-
-        # Check write permission for deletion
-        if not self.check_permission(user["id"], "write", path):
-            raise ValueError("No delete permission")
-
-        # Delete state
-        if not self.state_store.delete_state(self.space_id, path):
-            raise ValueError("State not found")
+        # Simply delegate everything to post_message() with path as the message type
+        # The "state" topic handler in post_message will call _check_state_operation
+        # to do state-specific validation (capabilities, roles, chain of trust, etc.)
+        return await self.post_message(
+            topic_id="state",
+            message_hash=message_hash,
+            msg_type=path,  # State path IS the message type!
+            prev_hash=prev_hash,
+            data=data,
+            signature=signature,
+            token=token
+        )
 
     def list_state(self, prefix: str) -> List[Dict[str, Any]]:
         """List state entries matching prefix"""
         return self.state_store.list_state(self.space_id, prefix)
 
+
+    #region Messages
     # ========================================================================
     # Message Operations
     # ========================================================================
@@ -536,8 +504,9 @@ class Space:
         self,
         topic_id: str,
         message_hash: str,
+        msg_type: str,
         prev_hash: Optional[str],
-        encrypted_payload: str,
+        data: str,
         signature: str,
         token: str
     ) -> int:
@@ -549,8 +518,9 @@ class Space:
         Args:
             topic_id: Topic identifier
             message_hash: SHA256 hash of the message
+            msg_type: Message type (e.g., "chat.text", "chat.image")
             prev_hash: Hash of previous message in chain (None for first)
-            encrypted_payload: Base64-encoded encrypted message content
+            data: Base64-encoded encrypted message content
             signature: Base64-encoded Ed25519 signature
             token: JWT authentication token
 
@@ -562,17 +532,18 @@ class Space:
         """
         # Authenticate
         user = self.authenticate_request(token)
-        sender = user["public_key"]
+        sender = user["id"]
 
         # Check tool use limit BEFORE processing (returns True if usage should be tracked)
         should_track_usage = self._check_tool_limit(sender)
 
         # Check create permission
-        if not self.check_permission(sender, "create", f"topics/{topic_id}/messages/"):
+        # state topic is special - Doesn't require topic permission to send
+        if topic_id != "state" and not self.check_permission(sender, "create", f"topics/{topic_id}/messages/"):
             raise ValueError("No post permission")
 
         # Validate message hash
-        expected_hash = self.compute_message_hash(topic_id, prev_hash, encrypted_payload, sender)
+        expected_hash = self.compute_message_hash(topic_id, prev_hash, data, sender)
         if expected_hash != message_hash:
             raise ValueError("Message hash mismatch")
 
@@ -582,29 +553,59 @@ class Space:
         if not self.verify_message_signature(message_hash, signature_bytes, sender_bytes):
             raise ValueError("Invalid message signature")
 
-        # Get current chain head
-        current_head = self.message_store.get_chain_head(self.space_id, topic_id)
+        # For state-events topic, also check state-specific authorization
+        if topic_id == "state":
+            path = msg_type  # Path is stored in the type field for state events
 
-        # Validate prev_hash
-        if current_head is None:
-            if prev_hash is not None:
-                raise ValueError("First message must have prev_hash=null")
-        else:
-            if prev_hash != current_head["message_hash"]:
-                raise ValueError(f"Chain conflict: expected prev_hash={current_head['message_hash']}")
+            # Validate path first - before authentication or authorization
+            # This prevents wildcard injection attacks
+            try:
+                validate_user_path(path)
+            except PathValidationError as e:
+                raise ValueError(f"Invalid path: {e}")
 
-        # Store message
+            # Perform state-specific validation (chain of trust, capabilities, roles, tool creation)
+            self._check_state_operation(path, data, sender)
+
+            # Determine operation type based on data and existing state
+            if data:
+                # Set/create operation - check if state exists
+                existing = self.state_store.get_state(self.space_id, path)
+                operation = "modify" if existing else "create"
+            else:
+                # Delete operation (empty data)
+                operation = "delete"
+
+            # Check permission for this specific state path
+            # Use unified namespace: prefix with "state/"
+            if not self.check_permission(sender, operation, f"state/{path}"):
+                raise ValueError(f"No {operation} permission for state path: {path}")
+            
+            # Invalidate the cache for this path
+            # NOTE: This is safer than attempting to update the cache in place, and avoids potential
+            #       race conditions if we have multiple calls to this method running concurrently.
+            #       The state store will safely re-load its cache from the database the next time
+            #       this path entry is read.  The database is the source of ground truth, because
+            #       it uses transactions to prevent race conditions.
+            self.state_store.invalidate_cache(path)
+
+        # Store message with atomic chain validation
         server_timestamp = int(time.time() * 1000)
-        self.message_store.add_message(
-            space_id=self.space_id,
-            topic_id=topic_id,
-            message_hash=message_hash,
-            prev_hash=prev_hash,
-            encrypted_payload=encrypted_payload,
-            sender=sender,
-            signature=signature,
-            server_timestamp=server_timestamp
-        )
+        try:
+            self.message_store.add_message(
+                space_id=self.space_id,
+                topic_id=topic_id,
+                message_hash=message_hash,
+                msg_type=msg_type,
+                prev_hash=prev_hash,
+                data=data,
+                sender=sender,
+                signature=signature,
+                server_timestamp=server_timestamp
+            )
+        except ChainConflictError as e:
+            # Chain conflict - client needs to get new head and retry
+            raise ValueError(f"Chain conflict: {e}. Please get current chain head and retry.")
 
         # Increment tool usage after successful write (only if tool has use_limit)
         if should_track_usage:
@@ -614,8 +615,9 @@ class Space:
         message_dict = {
             "message_hash": message_hash,
             "topic_id": topic_id,
+            "type": msg_type,
             "prev_hash": prev_hash,
-            "encrypted_payload": encrypted_payload,
+            "data": data,
             "sender": sender,
             "signature": signature,
             "server_timestamp": server_timestamp
@@ -652,7 +654,7 @@ class Space:
         user = self.authenticate_request(token)
 
         # Check read permission
-        if not self.check_permission(user["public_key"], "read", f"topics/{topic_id}/messages/"):
+        if not self.check_permission(user["id"], "read", f"topics/{topic_id}/messages/"):
             raise ValueError("No read permission for topic")
 
         # Get messages
@@ -683,7 +685,7 @@ class Space:
         user = self.authenticate_request(token)
 
         # Check read permission for the topic (before DB query for better security)
-        if not self.check_permission(user["public_key"], "read", f"topics/{topic_id}/messages/"):
+        if not self.check_permission(user["id"], "read", f"topics/{topic_id}/messages/"):
             raise ValueError("No read permission")
 
         # Get message
@@ -693,6 +695,121 @@ class Space:
 
         return message
 
+    #region KV Data
+    # ========================================================================
+    # KV Data Operations
+    # ========================================================================
+        
+    def get_data(self, path: str, token: str) -> Dict[str, Any]:
+        """
+        Get state value by path with authentication and authorization.
+
+        Args:
+            path: State path to retrieve
+            token: JWT authentication token
+
+        Returns:
+            KV data dictionary
+
+        Raises:
+            ValueError: If auth fails, permission denied, or state not found
+            PathValidationError: If path contains invalid characters or wildcards
+        """
+
+        # Authenticate
+        member = self.authenticate_request(token)
+
+        # Check read permission for the data path (before DB query for better security)
+        if not self.check_permission(member["id"], "read", f"data/{path}"):
+            raise ValueError("No read permission")
+
+        # Fetch the data
+        data = self.data_store.get_data(self.space_id, path)
+        if not data:
+            raise ValueError("Data not found")
+        # Return result
+        return data
+    
+    def set_data(
+            self,
+            path: str,
+            data: str,
+            signature: str,
+            signed_by: str,
+            signed_at: int,
+            token: str
+    ):
+        """
+        Set data value by path with authentication and authorization.
+
+        Args:
+            path: Data store path (KV key) to write
+            data: KV value to store (base64)
+            signature: Sender's signature
+            signed_by: ID of sender
+            signed_at: Signature timestamp
+            token: JWT authentication token
+
+        Returns:
+            Server timestamp
+
+        Raises:
+            ValueError: If auth fails or permission denied
+            PathValidationError: If path contains invalid characters or wildcards
+        """
+        # Authenticate
+        member = self.authenticate_request(token)
+        if signed_by != member["id"]:
+            raise ValueError("Signer does not match")
+
+        # Get current timestamp (before db operations)
+        server_timestamp = int(time.time() * 1000)
+
+        # Determine operation type based on data and existing contents
+        if data:
+            # Set/create operation - check if data exists
+            existing = self.data_store.get_data(self.space_id, path)
+            operation = "modify" if existing else "create"
+        else:
+            # Delete operation (empty data)
+            operation = "delete"
+
+        # Check permission for this specific data path
+        if not self.check_permission(member["id"], operation, path):
+            raise ValueError(f"No {operation} permission for state path: {path}")
+        
+        # Save the data in the store
+        self.data_store.set_data(self.space_id, path, data, signature, signed_by, signed_at)
+
+        return server_timestamp
+    
+    def delete_data(
+        self,
+        path: str,
+        token: str
+    ):
+        """
+        Delete data value by path with authentication and authorization.
+
+        Args:
+            path: Data store path (KV key) to write
+            token: JWT authentication token
+
+        Raises:
+            ValueError: If auth fails or permission denied
+            PathValidationError: If path contains invalid characters or wildcards
+        """
+        # Authenticate
+        member = self.authenticate_request(token)
+
+        # Check permission for this specific data path
+        if not self.check_permission(member["id"], "delete", path):
+            raise ValueError(f"No delete permission for state path: {path}")
+        
+        # Remove the data from the store
+        self.data_store.delete_data(self.space_id, path)
+
+    #region Authorization
     # ========================================================================
     # Authorization
     # ========================================================================
@@ -807,7 +924,7 @@ class Space:
             return False
 
         # Get current usage
-        usage = self.state_store.get_tool_usage(self.space_id, tool_id)
+        usage = self.message_store.get_tool_usage(self.space_id, tool_id)
         current_count = usage['use_count'] if usage else 0
 
         # Check limit
@@ -832,8 +949,9 @@ class Space:
             return
 
         now = int(time.time() * 1000)
-        self.state_store.increment_tool_usage(self.space_id, user_public_key, now)
+        self.message_store.increment_tool_usage(self.space_id, user_public_key, now)
 
+    #region Blobs
     # ========================================================================
     # Blob Management
     # ========================================================================
@@ -1066,6 +1184,7 @@ class Space:
         # Remove the reference (will delete blob content if no references remain)
         return self.blob_store.remove_blob_reference(blob_id, self.space_id, user_id)
 
+    #region WebSockets
     # ========================================================================
     # WebSocket Management
     # ========================================================================
@@ -1136,6 +1255,7 @@ class Space:
         """Get number of active WebSocket connections"""
         return len(self.websockets)
 
+    #region Utilities
     # ========================================================================
     # Validation & Crypto Utilities
     # ========================================================================
@@ -1144,7 +1264,7 @@ class Space:
         self,
         topic_id: str,
         prev_hash: Optional[str],
-        encrypted_payload: str,
+        data: str,
         sender: str
     ) -> str:
         """Compute the hash for a message"""
@@ -1152,7 +1272,7 @@ class Space:
             self.space_id,
             topic_id,
             prev_hash,
-            encrypted_payload,
+            data,
             sender
         )
 
@@ -1178,6 +1298,7 @@ class Space:
         """Verify a generic signature"""
         return self.crypto.verify_signature(message, signature, public_key)
 
+    #region Stats
     # ========================================================================
     # Maintenance & Stats
     # ========================================================================

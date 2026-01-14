@@ -9,9 +9,9 @@ import threading
 from pathlib import Path
 from typing import Dict, Optional, Callable
 from space import Space
-from state_store import StateStore
+from data_store import DataStore
 from message_store import MessageStore
-from sqlite_state_store import SqliteStateStore
+from sqlite_data_store import SqliteDataStore
 from sqlite_message_store import SqliteMessageStore
 from blob_store import BlobStore
 from lru_cache import LRUCache
@@ -36,7 +36,7 @@ class SpaceManager:
         base_storage_dir: str = "spaces",
         max_cached_spaces: int = 1000,
         redis_client=None,  # Optional: redis.Redis() instance
-        state_store_factory: Optional[Callable[[], StateStore]] = None,
+        data_store_factory: Optional[Callable[[], DataStore]] = None,
         message_store_factory: Optional[Callable[[], MessageStore]] = None,
         blob_store: Optional[BlobStore] = None,
         jwt_secret: Optional[str] = None,
@@ -50,7 +50,7 @@ class SpaceManager:
             base_storage_dir: Base directory for space storage (used with SQLite)
             max_cached_spaces: Maximum number of spaces to keep in memory
             redis_client: Optional Redis client for pub/sub (set to None if using consistent hashing)
-            state_store_factory: Optional factory function () -> StateStore (for global stores like Firestore)
+            data_store_factory: Optional factory function () -> DataStore (for global stores like Firestore)
             message_store_factory: Optional factory function () -> MessageStore (for global stores like Firestore)
             blob_store: Optional blob storage backend (shared across all spaces)
             jwt_secret: JWT signing secret (shared across all spaces)
@@ -60,7 +60,7 @@ class SpaceManager:
         self.base_storage_dir = base_storage_dir
         self.max_cached_spaces = max_cached_spaces
         self.redis_client = redis_client
-        self.state_store_factory = state_store_factory
+        self.data_store_factory = data_store_factory
         self.message_store_factory = message_store_factory
         self.blob_store = blob_store
 
@@ -98,9 +98,9 @@ class SpaceManager:
 
             logger.info(f"Creating new space instance: {space_id}")
             # Create stores for this space
-            if self.state_store_factory and self.message_store_factory:
+            if self.data_store_factory and self.message_store_factory:
                 # Use provided factories (e.g., Firestore - shared global stores)
-                state_store = self.state_store_factory()
+                data_store = self.data_store_factory()
                 message_store = self.message_store_factory()
             else:
                 # Default: per-space SQLite databases
@@ -108,13 +108,13 @@ class SpaceManager:
                 storage_path = Path(storage_dir)
                 storage_path.mkdir(parents=True, exist_ok=True)
 
-                state_store = SqliteStateStore(str(storage_path / "state.db"))
+                data_store = SqliteDataStore(str(storage_path / "state.db"))
                 message_store = SqliteMessageStore(str(storage_path / "messages.db"))
 
             # Create space instance
             space = Space(
                 space_id=space_id,
-                state_store=state_store,
+                data_store=data_store,
                 message_store=message_store,
                 blob_store=self.blob_store,
                 jwt_secret=self.jwt_secret,

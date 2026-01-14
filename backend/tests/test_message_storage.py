@@ -18,8 +18,9 @@ def generic_message_add_and_get(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="general",
         message_hash="hash1",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="encrypted_content",
+        data="encrypted_content",
         sender="alice_key",
         signature="dummy_signature",
         server_timestamp=12346000
@@ -28,6 +29,7 @@ def generic_message_add_and_get(message_store: MessageStore, space_id: str):
     messages = message_store.get_messages(space_id, "general")
     assert len(messages) == 1
     assert messages[0]["message_hash"] == "hash1"
+    assert messages[0]["type"] == "chat.text"
     assert messages[0]["sender"] == "alice_key"
     assert messages[0]["server_timestamp"] == 12346000
 
@@ -39,8 +41,9 @@ def generic_message_chain(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="general",
         message_hash="hash1",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="msg1",
+        data="msg1",
         sender="alice_key",
         signature="sig1",
         server_timestamp=12346000
@@ -51,8 +54,9 @@ def generic_message_chain(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="general",
         message_hash="hash2",
+        msg_type="chat.text",
         prev_hash="hash1",
-        encrypted_payload="msg2",
+        data="msg2",
         sender="bob_key",
         signature="sig2",
         server_timestamp=12347000
@@ -68,8 +72,9 @@ def generic_chain_head_tracking(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="general",
         message_hash="hash1",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="encrypted_content",
+        data="encrypted_content",
         sender="alice_key",
         signature="dummy_signature",
         server_timestamp=12346000
@@ -83,8 +88,9 @@ def generic_chain_head_tracking(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="general",
         message_hash="hash2",
+        msg_type="chat.text",
         prev_hash="hash1",
-        encrypted_payload="encrypted_content",
+        data="encrypted_content",
         sender="bob_key",
         signature="dummy_signature",
         server_timestamp=12347000
@@ -100,8 +106,9 @@ def generic_time_based_queries(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="general",
         message_hash="hash1",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="encrypted_content",
+        data="encrypted_content",
         sender="alice_key",
         signature="dummy_signature",
         server_timestamp=12346000
@@ -126,8 +133,9 @@ def generic_message_by_hash_lookup(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="general",
         message_hash="hash1",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="encrypted_content",
+        data="encrypted_content",
         sender="alice_key",
         signature="dummy_signature",
         server_timestamp=12346000
@@ -155,8 +163,9 @@ def generic_message_limit(message_store: MessageStore, space_id: str):
             space_id=space_id,
             topic_id="general",
             message_hash=f"hash{i}",
+            msg_type="chat.text",
             prev_hash=f"hash{i-1}" if i > 0 else None,
-            encrypted_payload=f"msg{i}",
+            data=f"msg{i}",
             sender="alice_key",
             signature=f"sig{i}",
             server_timestamp=12346000 + i * 1000
@@ -173,8 +182,9 @@ def generic_multiple_topics(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="general",
         message_hash="hash1",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="msg1",
+        data="msg1",
         sender="alice_key",
         signature="sig1",
         server_timestamp=12346000
@@ -184,8 +194,9 @@ def generic_multiple_topics(message_store: MessageStore, space_id: str):
         space_id=space_id,
         topic_id="announcements",
         message_hash="hash2",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="msg2",
+        data="msg2",
         sender="bob_key",
         signature="sig2",
         server_timestamp=12347000
@@ -209,8 +220,9 @@ def generic_multiple_spaces(message_store: MessageStore, space_id: str):
         space_id=space1_id,
         topic_id="general",
         message_hash="hash1",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="msg1",
+        data="msg1",
         sender="alice_key",
         signature="sig1",
         server_timestamp=12346000
@@ -220,8 +232,9 @@ def generic_multiple_spaces(message_store: MessageStore, space_id: str):
         space_id=space2_id,
         topic_id="general",
         message_hash="hash2",
+        msg_type="chat.text",
         prev_hash=None,
-        encrypted_payload="msg2",
+        data="msg2",
         sender="bob_key",
         signature="sig2",
         server_timestamp=12347000

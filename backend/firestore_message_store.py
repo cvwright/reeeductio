@@ -10,6 +10,7 @@ from typing import Optional, List, Dict, Any
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from message_store import MessageStore
+from exceptions import ChainConflictError
 
 
 class FirestoreMessageStore(MessageStore):
@@ -37,8 +38,9 @@ class FirestoreMessageStore(MessageStore):
         space_id: str,
         topic_id: str,
         message_hash: str,
+        msg_type: str,
         prev_hash: Optional[str],
-        encrypted_payload: str,
+        data: str,
         sender: str,
         signature: str,
         server_timestamp: int
@@ -53,8 +55,6 @@ class FirestoreMessageStore(MessageStore):
         Raises:
             ChainConflictError: If prev_hash doesn't match current chain head
         """
-        from exceptions import ChainConflictError
-
         @firestore.transactional
         def add_message_transaction(transaction):
             # Get references
@@ -95,8 +95,9 @@ class FirestoreMessageStore(MessageStore):
             # Insert message (chain validated - we own the new head)
             transaction.set(msg_ref, {
                 'message_hash': message_hash,
+                'type': msg_type,
                 'prev_hash': prev_hash,
-                'encrypted_payload': encrypted_payload,
+                'data': data,
                 'sender': sender,
                 'signature': signature,
                 'server_timestamp': server_timestamp
@@ -111,7 +112,6 @@ class FirestoreMessageStore(MessageStore):
         # Execute transaction
         transaction = self.db.transaction()
         add_message_transaction(transaction)
-
 
     def get_messages(
         self,
@@ -144,15 +144,16 @@ class FirestoreMessageStore(MessageStore):
         # Execute query and convert to list
         results = []
         for doc in query.stream():
-            data = doc.to_dict()
+            doc_data = doc.to_dict()
             results.append({
-                'message_hash': data['message_hash'],
+                'message_hash': doc_data['message_hash'],
                 'topic_id': topic_id,  # Add topic_id for consistency
-                'prev_hash': data['prev_hash'],
-                'encrypted_payload': data['encrypted_payload'],
-                'sender': data['sender'],
-                'signature': data['signature'],
-                'server_timestamp': data['server_timestamp']
+                'type': doc_data['type'],
+                'prev_hash': doc_data['prev_hash'],
+                'data': doc_data['data'],
+                'sender': doc_data['sender'],
+                'signature': doc_data['signature'],
+                'server_timestamp': doc_data['server_timestamp']
             })
 
         return results
@@ -177,15 +178,16 @@ class FirestoreMessageStore(MessageStore):
         if not doc.exists:
             return None
 
-        data = doc.to_dict()
+        doc_data = doc.to_dict()
         return {
-            'message_hash': data['message_hash'],
+            'message_hash': doc_data['message_hash'],
             'topic_id': topic_id,  # Add topic_id for consistency
-            'prev_hash': data['prev_hash'],
-            'encrypted_payload': data['encrypted_payload'],
-            'sender': data['sender'],
-            'signature': data['signature'],
-            'server_timestamp': data['server_timestamp']
+            'type': doc_data['type'],
+            'prev_hash': doc_data['prev_hash'],
+            'data': doc_data['data'],
+            'sender': doc_data['sender'],
+            'signature': doc_data['signature'],
+            'server_timestamp': doc_data['server_timestamp']
         }
 
     def get_chain_head(
@@ -212,4 +214,112 @@ class FirestoreMessageStore(MessageStore):
 
         return {
             'message_hash': data['chain_head']
+        }
+
+    def get_most_recent_message(
+        self,
+        space_id: str,
+        topic_id: str,
+        type: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the most recent message of a given type
+
+        Uses indexed query on server_timestamp filtered by type for efficient retrieval.
+        """
+        query = self.db.collection('spaces').document(space_id) \
+                      .collection('topics').document(topic_id) \
+                      .collection('messages') \
+                      .where(filter=FieldFilter('type', '==', type)) \
+                      .order_by('server_timestamp', direction=firestore.Query.DESCENDING) \
+                      .limit(1)
+
+        # Execute query
+        docs = list(query.stream())
+        if not docs:
+            return None
+
+        doc_data = docs[0].to_dict()
+        return {
+            'message_hash': doc_data['message_hash'],
+            'topic_id': topic_id,
+            'type': doc_data['type'],
+            'prev_hash': doc_data['prev_hash'],
+            'data': doc_data['data'],
+            'sender': doc_data['sender'],
+            'signature': doc_data['signature'],
+            'server_timestamp': doc_data['server_timestamp']
+        }
+
+    def initialize_tool_usage(self, space_id: str, tool_id: str) -> None:
+        """Initialize tool usage tracking for a use-limited tool."""
+        doc_ref = self.db.collection('spaces').document(space_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        doc_ref.set({
+            'use_count': 0,
+            'last_used_at': None
+        })
+
+    def increment_tool_usage(self, space_id: str, tool_id: str, timestamp: int) -> int:
+        """
+        Increment tool use count and return new count using Firestore transaction.
+
+        This is operational metadata (NOT part of space state).
+
+        Args:
+            space_id: Space identifier
+            tool_id: Tool identifier (T_*)
+            timestamp: Current timestamp in milliseconds
+
+        Returns:
+            New use count after increment
+        """
+        doc_ref = self.db.collection('spaces').document(space_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        @firestore.transactional
+        def update_in_transaction(transaction, doc_ref):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if snapshot.exists:
+                # Increment existing count
+                current_count = snapshot.get('use_count')
+                new_count = current_count + 1
+                transaction.update(doc_ref, {
+                    'use_count': new_count,
+                    'last_used_at': timestamp
+                })
+                return new_count
+            else:
+                # Tool not initialized
+                raise ValueError(f"Tool {tool_id} not initialized for space {space_id}")
+
+        transaction = self.db.transaction()
+        return update_in_transaction(transaction, doc_ref)
+
+    def get_tool_usage(self, space_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get tool usage statistics from Firestore.
+
+        This is operational metadata (NOT part of space state).
+
+        Args:
+            space_id: Space identifier
+            tool_id: Tool identifier (T_*)
+
+        Returns:
+            Dictionary with use_count and last_used_at, or None if not found
+        """
+        doc_ref = self.db.collection('spaces').document(space_id) \
+                        .collection('tool_usage').document(tool_id)
+
+        doc = doc_ref.get()
+        if not doc.exists:
+            return None
+
+        data = doc.to_dict()
+        return {
+            'use_count': data['use_count'],
+            'last_used_at': data.get('last_used_at')
         }

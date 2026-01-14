@@ -1,8 +1,9 @@
 """
 State storage abstraction layer for E2EE messaging system
 
-Provides a base StateStore interface and concrete implementations for
-storing space state in different backends (SQLite, LMDB, DynamoDB, etc.)
+Provides a base StateStore interface for concrete implementations for
+storing space state.  Currently the only implementation is event-sourced
+state (EventSourcedStateStore).
 """
 
 from abc import ABC, abstractmethod
@@ -36,55 +37,22 @@ class StateStore(ABC):
 
         Args:
             space_id: Space identifier
-            path: State path (e.g., "/state/members/alice")
+            path: State path (e.g., "profiles/alice")
 
         Returns:
             Dictionary containing:
-                - path: The state path
-                - data: The state data (base64-encoded string)
-                - signature: Ed25519 signature over (path + data + signed_at)
-                - signed_by: Public key of who signed this state entry
-                - signed_at: Unix timestamp in milliseconds when entry was signed
+                - message_hash: Hash of the current state message for the requested path
+                - topic_id: Topic identifier
+                - type: Message type (== state path)
+                - prev_hash: Hash of previous message in chain
+                - data: Message data (base64 encoded)
+                - sender: Public key of sender
+                - signature: Cryptographic signature
+                - server_timestamp: Unix timestamp from server
             None if state doesn't exist
         """
         pass
 
-    @abstractmethod
-    def set_state(
-        self,
-        space_id: str,
-        path: str,
-        data: str,
-        signature: str,
-        signed_by: str,
-        signed_at: int
-    ) -> None:
-        """
-        Set state value (create or update)
-
-        Args:
-            space_id: Space identifier
-            path: State path
-            data: State data (base64-encoded string)
-            signature: Ed25519 signature over (path + data + signed_at)
-            signed_by: Public key of who signed this state entry
-            signed_at: Unix timestamp in milliseconds when entry was signed
-        """
-        pass
-
-    @abstractmethod
-    def delete_state(self, space_id: str, path: str) -> bool:
-        """
-        Delete state value
-
-        Args:
-            space_id: Space identifier
-            path: State path
-
-        Returns:
-            True if state was deleted, False if it didn't exist
-        """
-        pass
 
     @abstractmethod
     def list_state(
@@ -97,66 +65,32 @@ class StateStore(ABC):
 
         Args:
             space_id: Space identifier
-            prefix: Path prefix to match (e.g., "/state/members/")
+            prefix: Path prefix to match (e.g., "users/")
 
         Returns:
             List of dictionaries, each containing:
-                - path: Full state path
-                - data: The state data (base64-encoded string)
-                - signature: Ed25519 signature over (path + data + signed_at)
-                - signed_by: Public key of who signed this state entry
-                - signed_at: Unix timestamp in milliseconds when entry was signed
+                - message_hash: Hash of the current state message for the given path
+                - topic_id: Topic identifier
+                - type: Message type (== state path)
+                - prev_hash: Hash of previous message in chain
+                - data: Message data (base64 encoded)
+                - sender: Public key of sender
+                - signature: Cryptographic signature
+                - server_timestamp: Unix timestamp from server
             Results are ordered by path lexicographically
         """
         pass
 
-    @abstractmethod
-    def initialize_tool_usage(self, space_id: str, tool_id: str) -> None:
+ 
+    def invalidate_cache(
+            self,
+            path: str
+    ):
         """
-        Initialize tool usage tracking for a use-limited tool.
-
-        This should be called when a tool with use_limit is created.
-        Creates a row with use_count=0 so that increment_tool_usage can always UPDATE.
+        Clear any cached value for the given path
 
         Args:
-            space_id: Space identifier
-            tool_id: Tool identifier (T_*)
+            path: State path (e.g., "profiles/alice")
         """
-        pass
-
-    @abstractmethod
-    def increment_tool_usage(self, space_id: str, tool_id: str, timestamp: int) -> int:
-        """
-        Increment tool use count and return new count.
-
-        This is operational metadata (NOT part of space state).
-        Used to track and enforce use_limit for tools.
-
-        NOTE: Assumes initialize_tool_usage has been called for this tool.
-        Will only UPDATE (never INSERT).
-
-        Args:
-            space_id: Space identifier
-            tool_id: Tool identifier (T_*)
-            timestamp: Current timestamp in milliseconds
-
-        Returns:
-            New use count after increment
-        """
-        pass
-
-    @abstractmethod
-    def get_tool_usage(self, space_id: str, tool_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get tool usage statistics.
-
-        This is operational metadata (NOT part of space state).
-
-        Args:
-            space_id: Space identifier
-            tool_id: Tool identifier (T_*)
-
-        Returns:
-            Dictionary with use_count and last_used_at, or None if tool has not been used
-        """
-        pass
+        if self._cache is not None:
+            self._cache.delete(path)

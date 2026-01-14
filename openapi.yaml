@@ -3,17 +3,20 @@ info:
   title: "reeeductio Spaces API"
   description: |
     End-to-end encrypted messaging system with capability-based authorization.
-    
+
     ## Architecture
     - **Spaces**: Access control boundary (one shared symmetric key)
-    - **Topics**: Message streams within a space (independent blockchain-like chains)
-    - **State**: Per-space key-value store (base64-encoded data, context-dependent interpretation)
+    - **Messages**: Append-only message streams (topics) forming blockchain-like chains
+    - **Blobs**: Content-addressed encrypted binary storage
+    - **Data**: Simple key-value store for application data
+    - **State**: Event-sourced key-value store with temporal guarantees (includes auth)
     - **Capabilities**: Granular, signed permissions using public key cryptography
-    
+
     ## Security Model
     - Zero-knowledge server (can't decrypt message content)
     - Capability-based authorization with signature verification
-    - Message integrity via hash chains
+    - Message integrity via hash chains with compare-and-swap
+    - Chain of trust verification from every member back to space admin
     - Space creator (space public key) has implicit admin rights
   version: 1.0.0
   contact:
@@ -28,12 +31,14 @@ servers:
 tags:
   - name: Authentication
     description: Challenge-response authentication using Ed25519 signatures
-  - name: State
-    description: Space state storage (members, capabilities, metadata) - all data stored as base64
   - name: Messages
-    description: Blockchain-style message streams
+    description: Blockchain-style message streams (topics)
   - name: Blobs
-    description: Encrypted file storage
+    description: Content-addressed encrypted file storage
+  - name: Data
+    description: Simple key-value store for application data
+  - name: State
+    description: Event-sourced key-value store (auth and temporal state)
   - name: WebSocket
     description: Real-time message streaming
 
@@ -151,11 +156,11 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /spaces/{space_id}/state/{path}:
+  /spaces/{space_id}/data/{path}:
     get:
-      tags: [State]
-      summary: Get state value
-      description: Retrieve state data as base64-encoded string
+      tags: [Data]
+      summary: Get data value
+      description: Retrieve simple key-value data as base64-encoded string
       parameters:
         - $ref: '#/components/parameters/SpaceId'
         - name: path
@@ -165,18 +170,18 @@ paths:
             type: string
             pattern: '^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)*$'
           description: |
-            State path using slug-formatted segments (alphanumeric, dots, hyphens, underscores).
-            Examples: "profiles/alice", "topics/general/messages", "files/photo.jpg"
+            Data path using slug-formatted segments (alphanumeric, dots, hyphens, underscores).
+            Examples: "profiles/alice", "settings/theme", "cache/user_list"
             Wildcards like {self}, {any} are NOT allowed in user-created paths.
       security:
         - BearerAuth: []
       responses:
         '200':
-          description: State retrieved successfully
+          description: Data retrieved successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StateEntry'
+                $ref: '#/components/schemas/DataEntry'
         '404':
           $ref: '#/components/responses/NotFound'
         '401':
@@ -185,11 +190,11 @@ paths:
           $ref: '#/components/responses/Forbidden'
 
     put:
-      tags: [State]
-      summary: Set state value
+      tags: [Data]
+      summary: Set data value
       description: |
-        Create or update state data with cryptographic signature verification.
-        All state entries must be signed - the server verifies the signature before storing.
+        Create or update simple key-value data with cryptographic signature verification.
+        All data entries must be signed - the server verifies the signature before storing.
       parameters:
         - $ref: '#/components/parameters/SpaceId'
         - name: path
@@ -210,24 +215,24 @@ paths:
                 data:
                   type: string
                   format: base64
-                  description: Base64-encoded state data (interpretation is context-dependent)
+                  description: Base64-encoded data (interpretation is context-dependent)
                 signature:
                   type: string
                   format: base64
-                  description: Ed25519 signature over (space_id|path|data|signed_at) by signer (REQUIRED for all state writes)
+                  description: Ed25519 signature over (space_id|path|data|signed_at) by signer (REQUIRED for all data writes)
                 signed_by:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{44}$'
                   minLength: 44
                   maxLength: 44
-                  description: Typed user/tool identifier of signer (REQUIRED for all state writes)
+                  description: Typed user/tool identifier of signer (REQUIRED for all data writes)
                 signed_at:
                   type: integer
                   format: int64
-                  description: Unix timestamp in milliseconds when entry was signed (REQUIRED for all state writes)
+                  description: Unix timestamp in milliseconds when entry was signed (REQUIRED for all data writes)
       responses:
         '200':
-          description: State updated successfully
+          description: Data updated successfully
           content:
             application/json:
               schema:
@@ -238,7 +243,7 @@ paths:
                   signed_at:
                     type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds from the signed state entry
+                    description: Unix timestamp in milliseconds from the signed data entry
         '400':
           description: Invalid signature or missing required fields
           content:
@@ -250,12 +255,100 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-    delete:
+  /spaces/{space_id}/state:
+    get:
       tags: [State]
-      summary: Delete state value
+      summary: Query all state messages
       description: |
-        Remove state data with cryptographic signature verification.
-        Deletion requests must be signed - the server verifies the signature before deleting.
+        Retrieve all state change messages from the "state" topic. This is effectively
+        an alias for GET /spaces/{space_id}/topics/state/messages. State is stored as
+        messages with the state path in the "type" field.
+      parameters:
+        - $ref: '#/components/parameters/SpaceId'
+        - name: from
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Server timestamp in milliseconds (inclusive) - get messages after this time
+        - name: to
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Server timestamp in milliseconds (inclusive) - get messages before this time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+          description: Maximum number of messages to return
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: State messages retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  has_more:
+                    type: boolean
+                    description: Whether more messages exist beyond the limit
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /spaces/{space_id}/state/{path}:
+    get:
+      tags: [State]
+      summary: Get current state at path
+      description: |
+        Retrieve the current (materialized) state value at a specific path. The server
+        computes this by replaying state messages from the "state" topic to find the
+        latest value for this path.
+      parameters:
+        - $ref: '#/components/parameters/SpaceId'
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)*$'
+          description: |
+            State path using slug-formatted segments (alphanumeric, dots, hyphens, underscores).
+            Examples: "auth/users/U_abc123", "auth/roles/admin", "config/settings"
+            Wildcards like {self}, {any} are NOT allowed in user-created paths.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: State retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    put:
+      tags: [State]
+      summary: Set state value
+      description: |
+        Create or update state by posting a message to the "state" topic. The message's
+        "type" field contains the state path, and the "data" field contains the state value.
+        Server validates chain integrity (prev_hash) and creates an immutable audit log.
       parameters:
         - $ref: '#/components/parameters/SpaceId'
         - name: path
@@ -271,27 +364,53 @@ paths:
           application/json:
             schema:
               type: object
-              required: [signature, signed_by, signed_at]
+              required: [prev_hash, data, message_hash, signature, signed_at]
               properties:
-                signature:
-                  type: string
-                  format: base64
-                  description: Ed25519 signature over (path + "DELETE" + signed_at) by signer (REQUIRED)
-                signed_by:
+                prev_hash:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{44}$'
                   minLength: 44
                   maxLength: 44
-                  description: Typed user/tool identifier of signer (REQUIRED)
+                  nullable: true
+                  description: Typed message identifier of previous message in state topic (null for first state message)
+                data:
+                  type: string
+                  format: base64
+                  maxLength: 102400
+                  description: Base64-encoded state data (max 100 KB)
+                message_hash:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: Typed message identifier (SHA256 hash with header, client-computed)
+                signature:
+                  type: string
+                  format: base64
+                  description: Ed25519 signature over message_hash by sender
                 signed_at:
                   type: integer
                   format: int64
-                  description: Unix timestamp in milliseconds when deletion was signed (REQUIRED)
+                  description: Unix timestamp in milliseconds when state was signed (REQUIRED)
       responses:
-        '204':
-          description: State deleted successfully
+        '201':
+          description: State message created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message_hash:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                  server_timestamp:
+                    type: integer
+                    format: int64
+                    description: Unix timestamp in milliseconds
         '400':
-          description: Invalid signature or missing required fields
+          description: Invalid message (bad hash, broken chain, etc.)
           content:
             application/json:
               schema:
@@ -300,8 +419,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Chain conflict (prev_hash doesn't match current head)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /spaces/{space_id}/topics/{topic_id}/messages:
     get:
@@ -371,8 +494,15 @@ paths:
           application/json:
             schema:
               type: object
-              required: [prev_hash, encrypted_payload, message_hash, signature]
+              required: [type, prev_hash, data, message_hash, signature]
               properties:
+                type:
+                  type: string
+                  description: |
+                    Message type/category. For state messages in the "state" topic, this contains
+                    the state path (e.g., "auth/users/U_abc123"). For regular messages, can be used
+                    for app-specific categorization (e.g., "chat", "notification").
+                  example: "chat"
                 prev_hash:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{44}$'
@@ -380,11 +510,11 @@ paths:
                   maxLength: 44
                   nullable: true
                   description: Typed message identifier of previous message (null for first message)
-                encrypted_payload:
+                data:
                   type: string
                   format: base64
                   maxLength: 102400
-                  description: Encrypted message content (max 100 KB)
+                  description: Encrypted message or state data (max 100 KB, base64-encoded)
                 message_hash:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{44}$'
@@ -692,6 +822,13 @@ components:
         topic_id:
           type: string
           pattern: '^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$'
+        type:
+          type: string
+          description: |
+            Message type/category. For state messages in the "state" topic, this field
+            contains the state path (e.g., "auth/users/U_abc123"). For regular messages,
+            this can be used for application-specific categorization (e.g., "chat", "notification").
+          example: "auth/users/U_abc123"
         prev_hash:
           type: string
           pattern: '^[A-Za-z0-9_-]{44}$'
@@ -699,11 +836,11 @@ components:
           maxLength: 44
           nullable: true
           description: Typed message identifier of previous message
-        encrypted_payload:
+        data:
           type: string
           format: base64
           maxLength: 102400
-          description: Encrypted message content (max 100 KB)
+          description: Encrypted message or state data (max 100 KB, base64-encoded)
         sender:
           type: string
           pattern: '^[A-Za-z0-9_-]{44}$'
@@ -826,28 +963,28 @@ components:
           format: base64
           description: Ed25519 signature over the role grant by granter
 
-    StateEntry:
+    DataEntry:
       type: object
       required: [path, data, signature, signed_by, signed_at]
       description: |
-        State entry stored in the space's state tree.
-        Every state entry must be cryptographically signed.
+        Simple key-value data entry stored in the space's data store.
+        Every data entry must be cryptographically signed.
       properties:
         path:
           type: string
           pattern: '^[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)*$'
           description: |
-            State path using slug-formatted segments (alphanumeric, dots, hyphens, underscores).
-            Examples: "profiles/alice", "auth/users/U_abc123", "topics/general/messages"
+            Data path using slug-formatted segments (alphanumeric, dots, hyphens, underscores).
+            Examples: "profiles/alice", "settings/theme", "cache/user_list"
             Wildcards like {self}, {any} are NOT allowed in user-created paths.
         data:
           type: string
           format: base64
-          description: Base64-encoded state data (interpretation is context-dependent)
+          description: Base64-encoded data (interpretation is context-dependent)
         signature:
           type: string
           format: base64
-          description: Ed25519 signature over the state entry (space_id|path|data|signed_at) by signer
+          description: Ed25519 signature over the data entry (space_id|path|data|signed_at) by signer
         signed_by:
           type: string
           pattern: '^[A-Za-z0-9_-]{44}$'
@@ -858,6 +995,13 @@ components:
           type: integer
           format: int64
           description: Unix timestamp in milliseconds when entry was signed
+
+    StateEntry:
+      description: |
+        DEPRECATED: State is now stored as messages in the "state" topic.
+        Use the Message schema instead. This schema is kept for backward compatibility.
+      allOf:
+        - $ref: '#/components/schemas/DataEntry'
 
     Error:
       type: object
