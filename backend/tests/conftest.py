@@ -40,6 +40,12 @@ def pytest_addoption(parser):
         default="auto",
         help="Firestore emulator mode: auto|testcontainers|external"
     )
+    parser.addoption(
+        "--s3-emulator",
+        action="store",
+        default="auto",
+        help="S3 emulator mode: auto|testcontainers|external (external uses env vars for real S3)"
+    )
 
 
 @pytest.fixture
@@ -547,3 +553,174 @@ def firestore_message_store(firestore_emulator):
 
     # Cleanup after test (best effort - may not complete before next test)
     _clear_firestore_data('test-project')
+
+
+#region S3 Blob Store
+# ============================================================================
+# S3 Blob Store Fixtures
+# ============================================================================
+
+@pytest.fixture(scope="session")
+def s3_emulator(request):
+    """
+    Smart S3 emulator fixture that adapts to environment.
+
+    Modes:
+    - auto: Use testcontainers if available, else external (default)
+    - testcontainers: Spin up MinIO container automatically
+    - external: Use real S3-compatible service (Backblaze B2, AWS S3, etc.)
+                configured via environment variables
+
+    Environment variables for external mode:
+    - S3_BUCKET_NAME: Bucket name (required)
+    - S3_ENDPOINT_URL: Custom endpoint URL (required for B2/MinIO)
+    - S3_ACCESS_KEY_ID: Access key ID (required)
+    - S3_SECRET_ACCESS_KEY: Secret access key (required)
+    - S3_REGION_NAME: Region name (default: us-east-1)
+
+    Usage:
+        # Automatic (tries testcontainers, falls back to external)
+        pytest backend/tests/test_s3_blob_storage.py
+
+        # Use real S3 service (Backblaze B2, etc.)
+        export S3_BUCKET_NAME=my-test-bucket
+        export S3_ENDPOINT_URL=https://s3.us-west-004.backblazeb2.com
+        export S3_ACCESS_KEY_ID=your-key-id
+        export S3_SECRET_ACCESS_KEY=your-secret-key
+        pytest --s3-emulator=external
+
+        # Force testcontainers
+        pytest --s3-emulator=testcontainers
+    """
+    mode = request.config.getoption("--s3-emulator")
+
+    if mode == "external":
+        # For real S3 services (Backblaze B2, AWS S3, etc.)
+        bucket_name = os.environ.get('S3_BUCKET_NAME')
+        endpoint_url = os.environ.get('S3_ENDPOINT_URL')
+        access_key = os.environ.get('S3_ACCESS_KEY_ID')
+        secret_key = os.environ.get('S3_SECRET_ACCESS_KEY')
+        region = os.environ.get('S3_REGION_NAME', 'us-east-1')
+
+        if not all([bucket_name, access_key, secret_key]):
+            pytest.skip(
+                "External S3 mode requires environment variables: "
+                "S3_BUCKET_NAME, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY"
+            )
+
+        yield {
+            'bucket_name': bucket_name,
+            'endpoint_url': endpoint_url,
+            'access_key_id': access_key,
+            'secret_access_key': secret_key,
+            'region_name': region
+        }
+        return
+
+    # Try testcontainers first (for CI and auto mode)
+    if mode in ("auto", "testcontainers"):
+        try:
+            from testcontainers.minio import MinioContainer
+            import time
+
+            # Create MinIO container with default credentials
+            container = MinioContainer()
+            container.start()
+
+            # Get connection details from container
+            # The endpoint from get_config() doesn't include the scheme, so add http://
+            endpoint = container.get_config()['endpoint']
+            if not endpoint.startswith('http'):
+                endpoint = f'http://{endpoint}'
+
+            s3_config = {
+                'bucket_name': f'test-bucket-{secrets.token_hex(4)}',
+                'endpoint_url': endpoint,
+                'access_key_id': container.access_key,
+                'secret_access_key': container.secret_key,
+                'region_name': 'us-east-1'
+            }
+
+            # Give MinIO time to initialize
+            time.sleep(1)
+
+            yield s3_config
+
+            container.stop()
+            return
+
+        except ImportError:
+            if mode == "testcontainers":
+                pytest.skip("testcontainers[minio] not installed (pip install testcontainers[minio])")
+            # Fall through to external mode for 'auto'
+        except Exception as e:
+            if mode == "testcontainers":
+                pytest.skip(f"Failed to start MinIO container: {e}")
+            # Fall through to external mode for 'auto'
+
+    # Fallback to external S3 (for auto mode when testcontainers fails)
+    bucket_name = os.environ.get('S3_BUCKET_NAME')
+    access_key = os.environ.get('S3_ACCESS_KEY_ID')
+    secret_key = os.environ.get('S3_SECRET_ACCESS_KEY')
+
+    if all([bucket_name, access_key, secret_key]):
+        yield {
+            'bucket_name': bucket_name,
+            'endpoint_url': os.environ.get('S3_ENDPOINT_URL'),
+            'access_key_id': access_key,
+            'secret_access_key': secret_key,
+            'region_name': os.environ.get('S3_REGION_NAME', 'us-east-1')
+        }
+    else:
+        pytest.skip(
+            "S3 emulator not available. "
+            "Install testcontainers: pip install testcontainers[minio] "
+            "or set S3_* environment variables for external S3"
+        )
+
+
+def _cleanup_s3_blobs(s3_client, bucket_name):
+    """Helper to delete all objects with 'blobs/' prefix"""
+    from botocore.exceptions import ClientError
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=bucket_name, Prefix='blobs/'):
+            if 'Contents' in page:
+                for obj in page['Contents']:
+                    # Delete objects one at a time (MinIO doesn't support batch delete well)
+                    s3_client.delete_object(Bucket=bucket_name, Key=obj['Key'])
+    except ClientError as e:
+        # Ignore "bucket doesn't exist" errors
+        if e.response.get('Error', {}).get('Code') not in ('NoSuchBucket', '404'):
+            raise
+
+
+@pytest.fixture
+def s3_blob_store(s3_emulator, request):
+    """
+    Create an S3BlobStore instance for testing.
+
+    Cleans up test objects before and after each test to ensure isolation.
+    """
+    from s3_blob_store import S3BlobStore
+    from config import S3BlobConfig
+
+    # Create config from emulator settings
+    config = S3BlobConfig(
+        bucket_name=s3_emulator['bucket_name'],
+        endpoint_url=s3_emulator['endpoint_url'],
+        access_key_id=s3_emulator['access_key_id'],
+        secret_access_key=s3_emulator['secret_access_key'],
+        region_name=s3_emulator['region_name'],
+        presigned_url_expiration=300  # 5 minutes for tests
+    )
+
+    store = S3BlobStore(config)
+
+    # Cleanup before test to ensure isolation (previous test may have left data)
+    _cleanup_s3_blobs(store.s3_client, config.bucket_name)
+
+    yield store
+
+    # Cleanup after test
+    _cleanup_s3_blobs(store.s3_client, config.bucket_name)
