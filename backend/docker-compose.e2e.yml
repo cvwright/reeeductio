@@ -1,0 +1,88 @@
+# End-to-end testing setup with local containers for MinIO and Firestore
+# Usage:
+#   docker-compose -f docker-compose.e2e.yml up -d
+#   pytest backend/tests/e2e/ --e2e
+#   docker-compose -f docker-compose.e2e.yml down
+
+services:
+  # MinIO - S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console (optional, for debugging)
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Create default bucket on startup
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      mc mb myminio/e2e-test-bucket --ignore-existing;
+      mc anonymous set download myminio/e2e-test-bucket;
+      exit 0;
+      "
+
+  # Firestore emulator
+  firestore:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators firestore start --host-port=0.0.0.0:8080
+    ports:
+      - "8080:8080"
+    environment:
+      FIRESTORE_PROJECT_ID: e2e-test-project
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # Backend service configured for e2e testing
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      minio:
+        condition: service_healthy
+      firestore:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      # Use config file
+      CONFIG_FILE: /app/backend/backend/config.e2e.yaml
+      # Override Firestore to use emulator
+      FIRESTORE_EMULATOR_HOST: firestore:8080
+      GCLOUD_PROJECT: e2e-test-project
+    volumes:
+      # Mount the e2e config file
+      - ./config.e2e.yaml:/app/backend/backend/config.e2e.yaml:ro
+    working_dir: /app/backend/backend
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  minio_data:

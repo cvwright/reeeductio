@@ -1,0 +1,38 @@
+# End-to-end testing configuration
+# Used with docker-compose.e2e.yml
+
+environment: test
+debug: true
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  jwt_secret: "e2e-test-jwt-secret-do-not-use-in-production"
+  jwt_expiry_hours: 1
+  challenge_expiry_seconds: 300
+  max_message_size: 102400
+  max_blob_size: 10485760  # 10 MB for e2e tests
+
+# Use Firestore emulator (FIRESTORE_EMULATOR_HOST env var set in docker-compose)
+database:
+  type: firestore
+  project_id: e2e-test-project
+  database_id: "(default)"
+
+# Use filesystem for blob storage in e2e tests
+# This avoids presigned URL hostname issues when testing from host machine
+# For production-like testing with MinIO, run tests from within Docker
+blob_store:
+  type: filesystem
+  path: /app/backend/backend/blobs
+
+logging:
+  level: DEBUG
+  format: text
+  enable_access_log: true
+
+# Admin space configuration (optional - uncomment to test admin API)
+# admin:
+#   space_id: "<your-admin-space-id>"
+#   user_id: "<your-admin-user-id>"
+#   private_key: "<base64-encoded-private-key>"

@@ -578,7 +578,7 @@ async def upload_blob(
     # Get space and extract user from token
     space = space_manager.get_space(space_id)
     payload = space.verify_jwt(credentials.credentials)
-    user_id = payload.get("sub")
+    user_id = payload.get("id")
 
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
@@ -644,7 +644,7 @@ async def download_blob(
     # Get space and extract user from token
     space = space_manager.get_space(space_id)
     payload = space.verify_jwt(credentials.credentials)
-    user_id = payload.get("sub")
+    user_id = payload.get("id")
 
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
@@ -681,7 +681,7 @@ async def delete_blob(
     # Get space and extract user from token
     space = space_manager.get_space(space_id)
     payload = space.verify_jwt(credentials.credentials)
-    user_id = payload.get("sub")
+    user_id = payload.get("id")
 
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
@@ -847,7 +847,7 @@ async def admin_delete_blob(
 
     try:
         payload = admin_space.verify_jwt(credentials.credentials)
-        admin_user_id = payload["sub"]
+        admin_user_id = payload["id"]
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
