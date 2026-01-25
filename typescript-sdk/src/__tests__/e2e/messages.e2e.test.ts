@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { Space } from '../../client.js';
-import { generateKeyPair, toSpaceId, stringToBytes, bytesToString } from '../../crypto.js';
+import { generateKeyPair, toSpaceId, stringToBytes } from '../../crypto.js';
 import { validateMessageChain } from '../../messages.js';
 import { E2E_BACKEND_URL, waitForBackend, randomTopicId } from './setup.js';
 
