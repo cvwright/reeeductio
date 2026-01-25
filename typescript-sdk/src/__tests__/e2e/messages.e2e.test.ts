@@ -89,7 +89,7 @@ describe('E2E: Messages', () => {
     const { messages } = await space.getMessages(topicId);
 
     expect(messages.length).toBe(3);
-    expect(validateMessageChain(messages)).toBe(true);
+    expect(validateMessageChain(spaceId, messages)).toBe(true);
 
     // Verify ordering
     expect(messages[0].message_hash).toBe(msg1.message_hash);

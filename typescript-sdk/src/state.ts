@@ -6,6 +6,7 @@
  */
 
 import { postMessage } from './messages.js';
+import { debugLog, errorLog } from './debug.js';
 import type {
   Message,
   MessageCreated,
@@ -36,6 +37,7 @@ export async function getState(
 ): Promise<Message> {
   const url = `${baseUrl}/spaces/${spaceId}/state/${path}`;
 
+  debugLog('state', 'GET state', { url, spaceId, path });
   const response = await fetchFn(url, {
     method: 'GET',
     headers: {
@@ -45,13 +47,17 @@ export async function getState(
 
   if (!response.ok) {
     if (response.status === 404) {
+      debugLog('state', 'GET state not found', { status: response.status, spaceId, path });
       throw new NotFoundError(`No state found at path: ${path}`);
     }
     const error = await parseError(response);
+    errorLog('state', 'GET state failed', { status: response.status, error, spaceId, path });
     throw createApiError(response.status, error);
   }
 
-  return (await response.json()) as Message;
+  const message = (await response.json()) as Message;
+  debugLog('state', 'GET state ok', { status: response.status, spaceId, path, messageHash: message.message_hash });
+  return message;
 }
 
 /**
@@ -128,6 +134,7 @@ export async function getStateHistory(
   const queryString = params.toString();
   const url = `${baseUrl}/spaces/${spaceId}/state${queryString ? `?${queryString}` : ''}`;
 
+  debugLog('state', 'GET state history', { url, spaceId, query });
   const response = await fetchFn(url, {
     method: 'GET',
     headers: {
@@ -137,10 +144,18 @@ export async function getStateHistory(
 
   if (!response.ok) {
     const error = await parseError(response);
+    errorLog('state', 'GET state history failed', { status: response.status, error, spaceId });
     throw createApiError(response.status, error);
   }
 
-  return (await response.json()) as MessagesResponse;
+  const result = (await response.json()) as MessagesResponse;
+  debugLog('state', 'GET state history ok', {
+    status: response.status,
+    count: result.messages.length,
+    hasMore: result.has_more,
+    spaceId,
+  });
+  return result;
 }
 
 /**

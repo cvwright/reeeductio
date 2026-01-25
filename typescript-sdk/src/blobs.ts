@@ -4,7 +4,8 @@
  * Provides utilities for uploading, downloading, and managing encrypted blobs.
  */
 
-import { computeHash, toBlobId } from './crypto.js';
+import { computeHash, toBlobId, encodeBase64 } from './crypto.js';
+import { debugLog, errorLog, warnLog } from './debug.js';
 import type { BlobCreated, ApiError } from './types.js';
 import { createApiError, BlobError } from './exceptions.js';
 
@@ -41,9 +42,11 @@ export async function uploadBlob(
   data: Uint8Array
 ): Promise<BlobCreated> {
   // Compute blob ID from content
-  const blobId = computeBlobId(data);
+  const hashBytes = computeHash(data);
+  const blobId = toBlobId(hashBytes);
   const url = `${baseUrl}/spaces/${spaceId}/blobs/${blobId}`;
 
+  debugLog('blobs', 'PUT blob', { url, spaceId, blobId, dataBytes: data.length });
   const response = await fetchFn(url, {
     method: 'PUT',
     headers: {
@@ -61,34 +64,44 @@ export async function uploadBlob(
       throw new BlobError('Received 307 redirect but no Location header');
     }
 
+    debugLog('blobs', 'Uploading blob to redirect URL', { blobId });
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/octet-stream',
+      // Presigned S3 URLs may require checksum enforcement.
+      'x-amz-checksum-sha256': encodeBase64(hashBytes),
+    };
     // Upload to S3 directly (no auth header for presigned URL)
     const s3Response = await fetchFn(redirectUrl, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-      },
+      headers,
       body: data,
     });
 
     if (!s3Response.ok) {
+      errorLog('blobs', 'Blob upload redirect failed', { blobId, status: s3Response.status });
       throw new BlobError(`Failed to upload blob to S3: ${s3Response.status}`);
     }
 
+    debugLog('blobs', 'Blob upload redirect ok', { blobId, size: data.length });
     return { blob_id: blobId, size: data.length };
   }
 
   // Handle 409 Conflict (blob already exists - fine for content-addressed storage)
   if (response.status === 409) {
+    warnLog('blobs', 'Blob already exists', { blobId, size: data.length });
     return { blob_id: blobId, size: data.length };
   }
 
   if (!response.ok) {
     const error = await parseError(response);
+    errorLog('blobs', 'PUT blob failed', { status: response.status, error, blobId });
     throw createApiError(response.status, error);
   }
 
   // Direct upload (201)
-  return (await response.json()) as BlobCreated;
+  const created = (await response.json()) as BlobCreated;
+  debugLog('blobs', 'PUT blob ok', { status: response.status, blobId: created.blob_id, size: created.size });
+  return created;
 }
 
 /**
@@ -110,6 +123,7 @@ export async function downloadBlob(
 ): Promise<Uint8Array> {
   const url = `${baseUrl}/spaces/${spaceId}/blobs/${blobId}`;
 
+  debugLog('blobs', 'GET blob', { url, spaceId, blobId });
   const response = await fetchFn(url, {
     method: 'GET',
     headers: {
@@ -125,24 +139,29 @@ export async function downloadBlob(
       throw new BlobError('Received 307 redirect but no Location header');
     }
 
+    debugLog('blobs', 'Downloading blob from redirect URL', { blobId });
     // Download from S3 directly (no auth header for presigned URL)
     const s3Response = await fetchFn(redirectUrl, {
       method: 'GET',
     });
 
     if (!s3Response.ok) {
+      errorLog('blobs', 'Blob download redirect failed', { blobId, status: s3Response.status });
       throw new BlobError(`Failed to download blob from S3: ${s3Response.status}`);
     }
 
+    debugLog('blobs', 'Blob download redirect ok', { blobId });
     return new Uint8Array(await s3Response.arrayBuffer());
   }
 
   if (!response.ok) {
     const error = await parseError(response);
+    errorLog('blobs', 'GET blob failed', { status: response.status, error, blobId });
     throw createApiError(response.status, error);
   }
 
   // Direct download (200)
+  debugLog('blobs', 'GET blob ok', { status: response.status, blobId });
   return new Uint8Array(await response.arrayBuffer());
 }
 
@@ -166,6 +185,7 @@ export async function deleteBlob(
 ): Promise<void> {
   const url = `${baseUrl}/spaces/${spaceId}/blobs/${blobId}`;
 
+  debugLog('blobs', 'DELETE blob', { url, spaceId, blobId });
   const response = await fetchFn(url, {
     method: 'DELETE',
     headers: {
@@ -175,8 +195,11 @@ export async function deleteBlob(
 
   if (!response.ok) {
     const error = await parseError(response);
+    errorLog('blobs', 'DELETE blob failed', { status: response.status, error, blobId });
     throw createApiError(response.status, error);
   }
+
+  debugLog('blobs', 'DELETE blob ok', { status: response.status, blobId });
 }
 
 /**

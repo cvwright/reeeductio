@@ -11,8 +11,8 @@ import {
   encodeBase64,
   signData,
   stringToBytes,
-  concatBytes,
 } from './crypto.js';
+import { debugLog, warnLog, errorLog } from './debug.js';
 import type {
   Message,
   MessageCreated,
@@ -25,27 +25,27 @@ import { createApiError } from './exceptions.js';
 /**
  * Compute message hash for chain validation.
  *
- * Hash is computed over: topic_id|type|prev_hash|data|sender
+ * Hash is computed over: space_id|topic_id|prev_hash|data|sender
+ * where data is the base64-encoded message content.
  *
+ * @param spaceId - Typed space identifier
  * @param topicId - Topic identifier
- * @param msgType - Message type/category (or state path for state messages)
  * @param prevHash - Typed hash of previous message (null for first message)
- * @param data - Encrypted message data (raw bytes)
+ * @param dataBase64 - Base64-encoded message content
  * @param sender - Typed sender identifier
  * @returns Typed message hash (44-char base64 starting with 'M')
  */
 export function computeMessageHash(
+  spaceId: string,
   topicId: string,
-  msgType: string,
   prevHash: string | null,
-  data: Uint8Array,
+  dataBase64: string,
   sender: string
 ): string {
-  // Hash is over: topic_id|type|prev_hash|data|sender
-  const prevHashStr = prevHash ?? '';
-  const prefix = stringToBytes(`${topicId}|${msgType}|${prevHashStr}|`);
-  const suffix = stringToBytes(`|${sender}`);
-  const hashInput = concatBytes(prefix, data, suffix);
+  // Hash is over: space_id|topic_id|prev_hash|data|sender
+  // prev_hash is "null" when null, otherwise the actual hash
+  const prevHashStr = prevHash ?? 'null';
+  const hashInput = stringToBytes(`${spaceId}|${topicId}|${prevHashStr}|${dataBase64}|${sender}`);
 
   const hashBytes = computeHash(hashInput);
   return toMessageId(hashBytes);
@@ -78,12 +78,15 @@ export async function postMessage(
   senderPublicKeyTyped: string,
   senderPrivateKey: Uint8Array
 ): Promise<MessageCreated> {
-  // Compute message hash
+  // Base64 encode the data first (needed for hash and request body)
+  const dataBase64 = encodeBase64(data);
+
+  // Compute message hash over: space_id|topic_id|prev_hash|data|sender
   const messageHash = computeMessageHash(
+    spaceId,
     topicId,
-    msgType,
     prevHash,
-    data,
+    dataBase64,
     senderPublicKeyTyped
   );
 
@@ -95,13 +98,22 @@ export async function postMessage(
   const body = {
     type: msgType,
     prev_hash: prevHash,
-    data: encodeBase64(data),
+    data: dataBase64,
     message_hash: messageHash,
     signature: encodeBase64(signature),
   };
 
   // Post message
   const url = `${baseUrl}/spaces/${spaceId}/topics/${topicId}/messages`;
+  debugLog('messages', 'POST message', {
+    url,
+    spaceId,
+    topicId,
+    msgType,
+    prevHash,
+    dataBytes: data.length,
+    messageHash,
+  });
   const response = await fetchFn(url, {
     method: 'POST',
     headers: {
@@ -113,10 +125,17 @@ export async function postMessage(
 
   if (!response.ok) {
     const error = await parseError(response);
+  errorLog('messages', 'POST message failed', { status: response.status, error, messageHash });
     throw createApiError(response.status, error);
   }
 
-  return (await response.json()) as MessageCreated;
+  const created = (await response.json()) as MessageCreated;
+  debugLog('messages', 'POST message ok', {
+    status: response.status,
+    messageHash: created.message_hash,
+    serverTimestamp: created.server_timestamp,
+  });
+  return created;
 }
 
 /**
@@ -129,6 +148,11 @@ export async function postMessage(
  * @param topicId - Topic identifier
  * @param query - Optional query parameters
  * @returns Messages response with messages array and has_more flag
+ *
+ * Ordering:
+ * - If query.from and query.to are both provided and from > to, results are
+ *   returned in reverse-chronological order (newest first).
+ * - Otherwise, results are returned in chronological order (oldest first).
  */
 export async function getMessages(
   fetchFn: typeof fetch,
@@ -152,6 +176,7 @@ export async function getMessages(
   const queryString = params.toString();
   const url = `${baseUrl}/spaces/${spaceId}/topics/${topicId}/messages${queryString ? `?${queryString}` : ''}`;
 
+  debugLog('messages', 'GET messages', { url, spaceId, topicId, query });
   const response = await fetchFn(url, {
     method: 'GET',
     headers: {
@@ -161,13 +186,23 @@ export async function getMessages(
 
   if (!response.ok) {
     if (response.status === 404) {
+  debugLog('messages', 'GET messages not found', { status: response.status, spaceId, topicId });
       return { messages: [], has_more: false };
     }
     const error = await parseError(response);
+    errorLog('messages', 'GET messages failed', { status: response.status, error, spaceId, topicId });
     throw createApiError(response.status, error);
   }
 
-  return (await response.json()) as MessagesResponse;
+  const result = (await response.json()) as MessagesResponse;
+  debugLog('messages', 'GET messages ok', {
+    status: response.status,
+    count: result.messages.length,
+    hasMore: result.has_more,
+    spaceId,
+    topicId,
+  });
+  return result;
 }
 
 /**
@@ -191,6 +226,7 @@ export async function getMessage(
 ): Promise<Message> {
   const url = `${baseUrl}/spaces/${spaceId}/topics/${topicId}/messages/${messageHash}`;
 
+  debugLog('messages', 'GET message', { url, spaceId, topicId, messageHash });
   const response = await fetchFn(url, {
     method: 'GET',
     headers: {
@@ -200,24 +236,33 @@ export async function getMessage(
 
   if (!response.ok) {
     const error = await parseError(response);
+  errorLog('messages', 'GET message failed', { status: response.status, error, messageHash });
     throw createApiError(response.status, error);
   }
 
-  return (await response.json()) as Message;
+  const message = (await response.json()) as Message;
+  debugLog('messages', 'GET message ok', { status: response.status, messageHash });
+  return message;
 }
 
 /**
  * Validate that a list of messages forms a valid chain.
  *
+ * @param spaceId - Typed space identifier
  * @param messages - List of Message objects in chronological order
  * @returns True if chain is valid, False otherwise
  */
-export function validateMessageChain(messages: Message[]): boolean {
+export function validateMessageChain(spaceId: string, messages: Message[]): boolean {
   let prevHash: string | null = null;
 
   for (const msg of messages) {
     // Check that prev_hash matches
     if (msg.prev_hash !== prevHash) {
+      warnLog('messages', 'Message chain mismatch', {
+        expectedPrevHash: prevHash,
+        actualPrevHash: msg.prev_hash,
+        messageHash: msg.message_hash,
+      });
       return false;
     }
 
@@ -227,17 +272,21 @@ export function validateMessageChain(messages: Message[]): boolean {
       continue;
     }
 
-    // Verify message hash
-    const dataBytes = decodeUrlSafeBase64(msg.data);
+    // Verify message hash - data is already base64-encoded
     const expectedHash = computeMessageHash(
+      spaceId,
       msg.topic_id,
-      msg.type,
       msg.prev_hash,
-      dataBytes,
+      msg.data,
       msg.sender
     );
 
     if (msg.message_hash !== expectedHash) {
+      warnLog('messages', 'Message hash mismatch', {
+        expectedHash,
+        actualHash: msg.message_hash,
+        messageHash: msg.message_hash,
+      });
       return false;
     }
 

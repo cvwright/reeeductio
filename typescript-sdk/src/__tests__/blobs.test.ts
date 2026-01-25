@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computeBlobId, uploadBlob, downloadBlob, deleteBlob } from '../blobs.js';
-import { generateKeyPair, toSpaceId, stringToBytes } from '../crypto.js';
+import { generateKeyPair, toSpaceId, stringToBytes, computeHash, encodeBase64 } from '../crypto.js';
 
 describe('computeBlobId', () => {
   it('should compute a content-addressed blob ID', () => {
@@ -79,7 +79,8 @@ describe('uploadBlob', () => {
     const spaceId = toSpaceId(keyPair.publicKey);
     const data = stringToBytes('test blob data');
     const expectedBlobId = computeBlobId(data);
-    const s3Url = 'https://s3.amazonaws.com/presigned-url';
+    const s3Url = 'https://s3.amazonaws.com/presigned-url?X-Amz-SignedHeaders=content-type%3Bx-amz-checksum-sha256';
+    const expectedChecksum = encodeBase64(computeHash(data));
 
     // First call returns redirect
     mockFetch
@@ -120,7 +121,10 @@ describe('uploadBlob', () => {
       s3Url,
       expect.objectContaining({
         method: 'PUT',
-        headers: { 'Content-Type': 'application/octet-stream' },
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'x-amz-checksum-sha256': expectedChecksum,
+        },
         body: data,
       })
     );

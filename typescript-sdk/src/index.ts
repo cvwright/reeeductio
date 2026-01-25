@@ -123,5 +123,21 @@ export { computeDataSignature, getData, setData } from './kvdata.js';
 // Blob operations
 export { computeBlobId, uploadBlob, downloadBlob, deleteBlob } from './blobs.js';
 
+// Debug logging
+export {
+  LogLevel,
+  Logger,
+  createLogger,
+  getLogLevel,
+  setLogLevel,
+  isDebugEnabled,
+  setDebugEnabled,
+  debugLog,
+  infoLog,
+  warnLog,
+  errorLog,
+  traceLog,
+} from './debug.js';
+
 // High-level clients
 export { Space, AdminClient } from './client.js';

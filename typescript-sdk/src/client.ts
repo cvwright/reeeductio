@@ -285,7 +285,8 @@ export class Space {
 
     // Fetch prev_hash if not provided
     if (prevHash === undefined) {
-      const msgs = await this.getMessages(topicId, { limit: 1 });
+      const now = Date.now();
+      const msgs = await this.getMessages(topicId, { from: now, to: 0, limit: 1 });
       prevHash = msgs.messages.length > 0 ? msgs.messages[0].message_hash : null;
     }
 

@@ -11,19 +11,20 @@ import {
   toUserId,
   toSpaceId,
   stringToBytes,
+  encodeBase64,
   encodeUrlSafeBase64,
 } from '../crypto.js';
 
 describe('computeMessageHash', () => {
-  it('should compute hash over topic|type|prev_hash|data|sender', async () => {
+  it('should compute hash over space_id|topic_id|prev_hash|data|sender', async () => {
     const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
     const senderId = toUserId(keyPair.publicKey);
     const topicId = 'test-topic';
-    const messageType = 'text';
-    const data = stringToBytes('Hello, World!');
+    const dataBase64 = encodeBase64(stringToBytes('Hello, World!'));
     const prevHash = null;
 
-    const hash = computeMessageHash(topicId, messageType, prevHash, data, senderId);
+    const hash = computeMessageHash(spaceId, topicId, prevHash, dataBase64, senderId);
 
     // Returns a typed message ID string (44 chars starting with 'M')
     expect(typeof hash).toBe('string');
@@ -33,52 +34,56 @@ describe('computeMessageHash', () => {
 
   it('should produce consistent hashes', async () => {
     const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
     const senderId = toUserId(keyPair.publicKey);
     const topicId = 'test-topic';
-    const messageType = 'text';
-    const data = stringToBytes('Hello, World!');
+    const dataBase64 = encodeBase64(stringToBytes('Hello, World!'));
     const prevHash = null;
 
-    const hash1 = computeMessageHash(topicId, messageType, prevHash, data, senderId);
-    const hash2 = computeMessageHash(topicId, messageType, prevHash, data, senderId);
+    const hash1 = computeMessageHash(spaceId, topicId, prevHash, dataBase64, senderId);
+    const hash2 = computeMessageHash(spaceId, topicId, prevHash, dataBase64, senderId);
 
     expect(hash1).toBe(hash2);
   });
 
   it('should include prev_hash in computation when provided', async () => {
     const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
     const senderId = toUserId(keyPair.publicKey);
     const topicId = 'test-topic';
-    const messageType = 'text';
-    const data = stringToBytes('Hello, World!');
+    const dataBase64 = encodeBase64(stringToBytes('Hello, World!'));
 
     // Use a fake prev_hash that looks valid
     const prevHash = 'M' + 'a'.repeat(43);
 
-    const hashWithPrev = computeMessageHash(topicId, messageType, prevHash, data, senderId);
-    const hashWithoutPrev = computeMessageHash(topicId, messageType, null, data, senderId);
+    const hashWithPrev = computeMessageHash(spaceId, topicId, prevHash, dataBase64, senderId);
+    const hashWithoutPrev = computeMessageHash(spaceId, topicId, null, dataBase64, senderId);
 
     expect(hashWithPrev).not.toBe(hashWithoutPrev);
   });
 
   it('should produce different hashes for different topics', async () => {
     const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
     const senderId = toUserId(keyPair.publicKey);
-    const data = stringToBytes('Hello');
+    const dataBase64 = encodeBase64(stringToBytes('Hello'));
 
-    const hash1 = computeMessageHash('topic1', 'text', null, data, senderId);
-    const hash2 = computeMessageHash('topic2', 'text', null, data, senderId);
+    const hash1 = computeMessageHash(spaceId, 'topic1', null, dataBase64, senderId);
+    const hash2 = computeMessageHash(spaceId, 'topic2', null, dataBase64, senderId);
 
     expect(hash1).not.toBe(hash2);
   });
 
-  it('should produce different hashes for different types', async () => {
-    const keyPair = await generateKeyPair();
-    const senderId = toUserId(keyPair.publicKey);
-    const data = stringToBytes('Hello');
+  it('should produce different hashes for different spaces', async () => {
+    const keyPair1 = await generateKeyPair();
+    const keyPair2 = await generateKeyPair();
+    const spaceId1 = toSpaceId(keyPair1.publicKey);
+    const spaceId2 = toSpaceId(keyPair2.publicKey);
+    const senderId = toUserId(keyPair1.publicKey);
+    const dataBase64 = encodeBase64(stringToBytes('Hello'));
 
-    const hash1 = computeMessageHash('topic', 'text', null, data, senderId);
-    const hash2 = computeMessageHash('topic', 'json', null, data, senderId);
+    const hash1 = computeMessageHash(spaceId1, 'topic', null, dataBase64, senderId);
+    const hash2 = computeMessageHash(spaceId2, 'topic', null, dataBase64, senderId);
 
     expect(hash1).not.toBe(hash2);
   });
@@ -101,7 +106,7 @@ describe('postMessage', () => {
 
     const mockResponse = {
       message_hash: 'M' + 'x'.repeat(43),
-      server_timestamp: new Date().toISOString(),
+      server_timestamp: Date.now(),
     };
 
     mockFetch.mockResolvedValueOnce({
@@ -289,7 +294,7 @@ describe('getMessage', () => {
       data: encodeUrlSafeBase64(stringToBytes('Hello')),
       sender: senderId,
       signature: 'sig1',
-      server_timestamp: new Date().toISOString(),
+      server_timestamp: Date.now(),
     };
 
     mockFetch.mockResolvedValueOnce({
@@ -319,14 +324,15 @@ describe('getMessage', () => {
 describe('validateMessageChain', () => {
   it('should validate a correct message chain', async () => {
     const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
     const senderId = toUserId(keyPair.publicKey);
 
     // Create a chain of messages
-    const data1 = stringToBytes('First');
-    const messageId1 = computeMessageHash('chat', 'text', null, data1, senderId);
+    const data1Base64 = encodeBase64(stringToBytes('First'));
+    const messageId1 = computeMessageHash(spaceId, 'chat', null, data1Base64, senderId);
 
-    const data2 = stringToBytes('Second');
-    const messageId2 = computeMessageHash('chat', 'text', messageId1, data2, senderId);
+    const data2Base64 = encodeBase64(stringToBytes('Second'));
+    const messageId2 = computeMessageHash(spaceId, 'chat', messageId1, data2Base64, senderId);
 
     const messages = [
       {
@@ -334,7 +340,7 @@ describe('validateMessageChain', () => {
         topic_id: 'chat',
         type: 'text',
         prev_hash: null,
-        data: encodeUrlSafeBase64(data1),
+        data: data1Base64,
         sender: senderId,
         signature: 'sig1',
         server_timestamp: Date.now(),
@@ -344,22 +350,23 @@ describe('validateMessageChain', () => {
         topic_id: 'chat',
         type: 'text',
         prev_hash: messageId1,
-        data: encodeUrlSafeBase64(data2),
+        data: data2Base64,
         sender: senderId,
         signature: 'sig2',
         server_timestamp: Date.now(),
       },
     ];
 
-    const isValid = validateMessageChain(messages);
+    const isValid = validateMessageChain(spaceId, messages);
     expect(isValid).toBe(true);
   });
 
   it('should reject a chain with incorrect hash', async () => {
     const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
     const senderId = toUserId(keyPair.publicKey);
 
-    const data1 = stringToBytes('First');
+    const data1Base64 = encodeBase64(stringToBytes('First'));
     const fakeMessageId = 'M' + 'x'.repeat(43); // Wrong hash
 
     const messages = [
@@ -368,27 +375,28 @@ describe('validateMessageChain', () => {
         topic_id: 'chat',
         type: 'text',
         prev_hash: null,
-        data: encodeUrlSafeBase64(data1),
+        data: data1Base64,
         sender: senderId,
         signature: 'sig1',
         server_timestamp: Date.now(),
       },
     ];
 
-    const isValid = validateMessageChain(messages);
+    const isValid = validateMessageChain(spaceId, messages);
     expect(isValid).toBe(false);
   });
 
   it('should reject a chain with broken prev_hash link', async () => {
     const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
     const senderId = toUserId(keyPair.publicKey);
 
-    const data1 = stringToBytes('First');
-    const messageId1 = computeMessageHash('chat', 'text', null, data1, senderId);
+    const data1Base64 = encodeBase64(stringToBytes('First'));
+    const messageId1 = computeMessageHash(spaceId, 'chat', null, data1Base64, senderId);
 
-    const data2 = stringToBytes('Second');
+    const data2Base64 = encodeBase64(stringToBytes('Second'));
     const wrongPrevHash = 'M' + 'y'.repeat(43); // Wrong prev_hash
-    const messageId2 = computeMessageHash('chat', 'text', wrongPrevHash, data2, senderId);
+    const messageId2 = computeMessageHash(spaceId, 'chat', wrongPrevHash, data2Base64, senderId);
 
     const messages = [
       {
@@ -396,7 +404,7 @@ describe('validateMessageChain', () => {
         topic_id: 'chat',
         type: 'text',
         prev_hash: null,
-        data: encodeUrlSafeBase64(data1),
+        data: data1Base64,
         sender: senderId,
         signature: 'sig1',
         server_timestamp: Date.now(),
@@ -406,28 +414,31 @@ describe('validateMessageChain', () => {
         topic_id: 'chat',
         type: 'text',
         prev_hash: wrongPrevHash, // Doesn't point to previous message
-        data: encodeUrlSafeBase64(data2),
+        data: data2Base64,
         sender: senderId,
         signature: 'sig2',
         server_timestamp: Date.now(),
       },
     ];
 
-    const isValid = validateMessageChain(messages);
+    const isValid = validateMessageChain(spaceId, messages);
     expect(isValid).toBe(false);
   });
 
-  it('should validate an empty chain', () => {
-    const isValid = validateMessageChain([]);
+  it('should validate an empty chain', async () => {
+    const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
+    const isValid = validateMessageChain(spaceId, []);
     expect(isValid).toBe(true);
   });
 
   it('should validate a single message chain', async () => {
     const keyPair = await generateKeyPair();
+    const spaceId = toSpaceId(keyPair.publicKey);
     const senderId = toUserId(keyPair.publicKey);
 
-    const data = stringToBytes('Only message');
-    const messageId = computeMessageHash('chat', 'text', null, data, senderId);
+    const dataBase64 = encodeBase64(stringToBytes('Only message'));
+    const messageId = computeMessageHash(spaceId, 'chat', null, dataBase64, senderId);
 
     const messages = [
       {
@@ -435,14 +446,14 @@ describe('validateMessageChain', () => {
         topic_id: 'chat',
         type: 'text',
         prev_hash: null,
-        data: encodeUrlSafeBase64(data),
+        data: dataBase64,
         sender: senderId,
         signature: 'sig1',
         server_timestamp: Date.now(),
       },
     ];
 
-    const isValid = validateMessageChain(messages);
+    const isValid = validateMessageChain(spaceId, messages);
     expect(isValid).toBe(true);
   });
 });

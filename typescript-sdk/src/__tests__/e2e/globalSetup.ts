@@ -2,9 +2,12 @@
  * Global setup for e2e tests.
  *
  * Starts docker-compose services before tests and stops them after.
+ * Also verifies admin API is working.
  */
 import { execSync } from 'child_process';
 import path from 'path';
+import { AdminClient } from '../../client.js';
+import { getAdminKeyPair, getAdminSpaceId } from './adminKeys.js';
 
 const DOCKER_COMPOSE_FILE = path.resolve(__dirname, '../../../../backend/docker-compose.e2e.yml');
 const BACKEND_URL = process.env.E2E_BACKEND_URL || 'http://localhost:8000';
@@ -88,6 +91,36 @@ function stopServices(): void {
 }
 
 /**
+ * Verify admin API is working.
+ */
+async function verifyAdminApi(): Promise<void> {
+  console.log('Verifying admin API...');
+
+  const keyPair = await getAdminKeyPair();
+  const expectedSpaceId = await getAdminSpaceId();
+
+  const adminClient = new AdminClient({
+    keyPair,
+    baseUrl: BACKEND_URL,
+  });
+
+  // Authenticate and get admin space ID
+  await adminClient.authenticate();
+  const actualSpaceId = await adminClient.getSpaceId();
+
+  if (actualSpaceId !== expectedSpaceId) {
+    throw new Error(
+      `Admin space ID mismatch!\n` +
+      `  Expected: ${expectedSpaceId}\n` +
+      `  Actual: ${actualSpaceId}\n` +
+      `Make sure config.e2e.yaml has the correct admin credentials.`
+    );
+  }
+
+  console.log('✓ Admin API verified');
+}
+
+/**
  * Global setup - runs before all tests.
  */
 export async function setup(): Promise<void> {
@@ -98,6 +131,9 @@ export async function setup(): Promise<void> {
     console.log('✓ Backend already running, skipping docker-compose start');
     // Set flag so we don't stop services in teardown
     process.env.__E2E_SKIP_TEARDOWN = 'true';
+    // Verify admin API works
+    await verifyAdminApi();
+    console.log('\n✓ E2E setup complete\n');
     return;
   }
 
@@ -117,6 +153,9 @@ export async function setup(): Promise<void> {
   // Wait for backend to be healthy
   console.log('Waiting for backend to become healthy...');
   await waitForBackend();
+
+  // Verify admin API works
+  await verifyAdminApi();
 
   console.log('\n✓ E2E setup complete\n');
 }

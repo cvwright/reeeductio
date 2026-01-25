@@ -7,9 +7,10 @@
 import {
   signData,
   toUserId,
-  decodeBase64,
   encodeBase64,
+  stringToBytes,
 } from './crypto.js';
+import { debugLog, infoLog, warnLog, errorLog } from './debug.js';
 import type {
   ChallengeResponse,
   TokenResponse,
@@ -62,13 +63,16 @@ export class AuthSession {
   async getToken(): Promise<string> {
     // Check if we need to authenticate or refresh
     if (!this.token || !this.tokenExpiresAt) {
+      debugLog('auth', 'No cached token; authenticating', { spaceId: this.spaceId });
       await this.authenticate();
     } else if (Date.now() >= this.tokenExpiresAt - this.refreshBuffer) {
       // Token is about to expire, try to refresh
+      debugLog('auth', 'Token expiring; refreshing', { spaceId: this.spaceId });
       try {
         await this.refresh();
       } catch {
         // Refresh failed, re-authenticate
+        warnLog('auth', 'Token refresh failed; re-authenticating', { spaceId: this.spaceId });
         await this.authenticate();
       }
     }
@@ -96,10 +100,11 @@ export class AuthSession {
   async authenticate(): Promise<TokenResponse> {
     // Step 1: Request challenge
     const userId = this.getUserId();
+    infoLog('auth', 'Authenticating', { spaceId: this.spaceId, userId });
     const challengeResponse = await this.requestChallenge(userId);
 
-    // Step 2: Sign the challenge
-    const challengeBytes = decodeBase64(challengeResponse.challenge);
+    // Step 2: Sign the challenge (sign the base64 string as UTF-8 bytes, not the decoded bytes)
+    const challengeBytes = stringToBytes(challengeResponse.challenge);
     const signature = await signData(challengeBytes, this.keyPair.privateKey);
 
     // Step 3: Verify and get token
@@ -112,6 +117,11 @@ export class AuthSession {
     this.token = tokenResponse.token;
     this.tokenExpiresAt = tokenResponse.expires_at;
 
+    infoLog('auth', 'Authenticated', {
+      spaceId: this.spaceId,
+      userId,
+      expiresAt: tokenResponse.expires_at,
+    });
     return tokenResponse;
   }
 
@@ -125,6 +135,7 @@ export class AuthSession {
 
     const url = `${this.baseUrl}/spaces/${this.spaceId}/auth/refresh`;
 
+    debugLog('auth', 'Refreshing token', { spaceId: this.spaceId, url });
     const response = await this.fetchFn(url, {
       method: 'POST',
       headers: {
@@ -135,6 +146,7 @@ export class AuthSession {
 
     if (!response.ok) {
       const error = await this.parseError(response);
+      errorLog('auth', 'Token refresh failed', { spaceId: this.spaceId, status: response.status, error });
       throw createApiError(response.status, error);
     }
 
@@ -142,6 +154,10 @@ export class AuthSession {
     this.token = tokenResponse.token;
     this.tokenExpiresAt = tokenResponse.expires_at;
 
+    infoLog('auth', 'Token refreshed', {
+      spaceId: this.spaceId,
+      expiresAt: tokenResponse.expires_at,
+    });
     return tokenResponse;
   }
 
@@ -151,6 +167,7 @@ export class AuthSession {
   private async requestChallenge(publicKey: string): Promise<ChallengeResponse> {
     const url = `${this.baseUrl}/spaces/${this.spaceId}/auth/challenge`;
 
+    debugLog('auth', 'Requesting challenge', { spaceId: this.spaceId, url, publicKey });
     const response = await this.fetchFn(url, {
       method: 'POST',
       headers: {
@@ -161,6 +178,7 @@ export class AuthSession {
 
     if (!response.ok) {
       const error = await this.parseError(response);
+      errorLog('auth', 'Challenge request failed', { spaceId: this.spaceId, status: response.status, error });
       throw createApiError(response.status, error);
     }
 
@@ -177,6 +195,7 @@ export class AuthSession {
   ): Promise<TokenResponse> {
     const url = `${this.baseUrl}/spaces/${this.spaceId}/auth/verify`;
 
+    debugLog('auth', 'Verifying challenge', { spaceId: this.spaceId, url, publicKey });
     const response = await this.fetchFn(url, {
       method: 'POST',
       headers: {
@@ -191,6 +210,11 @@ export class AuthSession {
 
     if (!response.ok) {
       const error = await this.parseError(response);
+      errorLog('auth', 'Challenge verification failed', {
+        spaceId: this.spaceId,
+        status: response.status,
+        error,
+      });
       throw createApiError(response.status, error);
     }
 
@@ -243,8 +267,10 @@ export class AdminAuthSession {
    */
   async getToken(): Promise<string> {
     if (!this.token || !this.tokenExpiresAt) {
+      debugLog('admin-auth', 'No cached token; authenticating', {});
       await this.authenticate();
     } else if (Date.now() >= this.tokenExpiresAt - this.refreshBuffer) {
+      debugLog('admin-auth', 'Token expiring; re-authenticating', {});
       await this.authenticate();
     }
 
@@ -277,10 +303,11 @@ export class AdminAuthSession {
     const userId = this.getUserId();
 
     // Request challenge
+    infoLog('admin-auth', 'Authenticating', { userId });
     const challengeResponse = await this.requestChallenge(userId);
 
-    // Sign challenge
-    const challengeBytes = decodeBase64(challengeResponse.challenge);
+    // Sign challenge (sign the base64 string as UTF-8 bytes, not the decoded bytes)
+    const challengeBytes = stringToBytes(challengeResponse.challenge);
     const signature = await signData(challengeBytes, this.keyPair.privateKey);
 
     // Verify and get token
@@ -293,6 +320,7 @@ export class AdminAuthSession {
     this.token = tokenResponse.token;
     this.tokenExpiresAt = tokenResponse.expires_at;
 
+    infoLog('admin-auth', 'Authenticated', { userId, expiresAt: tokenResponse.expires_at });
     return tokenResponse;
   }
 
@@ -302,6 +330,7 @@ export class AdminAuthSession {
   private async requestChallenge(publicKey: string): Promise<ChallengeResponse> {
     const url = `${this.baseUrl}/admin/auth/challenge`;
 
+    debugLog('admin-auth', 'Requesting challenge', { url, publicKey });
     const response = await this.fetchFn(url, {
       method: 'POST',
       headers: {
@@ -312,6 +341,7 @@ export class AdminAuthSession {
 
     if (!response.ok) {
       const error = await this.parseError(response);
+      errorLog('admin-auth', 'Challenge request failed', { status: response.status, error });
       throw createApiError(response.status, error);
     }
 
@@ -328,6 +358,7 @@ export class AdminAuthSession {
   ): Promise<TokenResponse> {
     const url = `${this.baseUrl}/admin/auth/verify`;
 
+    debugLog('admin-auth', 'Verifying challenge', { url, publicKey });
     const response = await this.fetchFn(url, {
       method: 'POST',
       headers: {
@@ -342,6 +373,7 @@ export class AdminAuthSession {
 
     if (!response.ok) {
       const error = await this.parseError(response);
+      errorLog('admin-auth', 'Challenge verification failed', { status: response.status, error });
       throw createApiError(response.status, error);
     }
 
@@ -355,6 +387,7 @@ export class AdminAuthSession {
     const token = await this.getToken();
     const url = `${this.baseUrl}/admin/space`;
 
+    debugLog('admin-auth', 'Fetching admin space ID', { url });
     const response = await this.fetchFn(url, {
       method: 'GET',
       headers: {
@@ -364,6 +397,7 @@ export class AdminAuthSession {
 
     if (!response.ok) {
       const error = await this.parseError(response);
+      errorLog('admin-auth', 'Fetch admin space ID failed', { status: response.status, error });
       throw createApiError(response.status, error);
     }
 

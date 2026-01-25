@@ -10,6 +10,7 @@ import {
   stringToBytes,
   concatBytes,
 } from './crypto.js';
+import { debugLog, errorLog } from './debug.js';
 import type {
   DataEntry,
   DataSetResponse,
@@ -62,6 +63,7 @@ export async function getData(
 ): Promise<DataEntry> {
   const url = `${baseUrl}/spaces/${spaceId}/data/${path}`;
 
+  debugLog('data', 'GET data', { url, spaceId, path });
   const response = await fetchFn(url, {
     method: 'GET',
     headers: {
@@ -71,13 +73,17 @@ export async function getData(
 
   if (!response.ok) {
     if (response.status === 404) {
+      debugLog('data', 'GET data not found', { status: response.status, spaceId, path });
       throw new NotFoundError(`No data found at path: ${path}`);
     }
     const error = await parseError(response);
+    errorLog('data', 'GET data failed', { status: response.status, error, spaceId, path });
     throw createApiError(response.status, error);
   }
 
-  return (await response.json()) as DataEntry;
+  const entry = (await response.json()) as DataEntry;
+  debugLog('data', 'GET data ok', { status: response.status, spaceId, path });
+  return entry;
 }
 
 /**
@@ -124,6 +130,7 @@ export async function setData(
   };
 
   const url = `${baseUrl}/spaces/${spaceId}/data/${path}`;
+  debugLog('data', 'PUT data', { url, spaceId, path, dataBytes: data.length, signedAt });
   const response = await fetchFn(url, {
     method: 'PUT',
     headers: {
@@ -135,10 +142,13 @@ export async function setData(
 
   if (!response.ok) {
     const error = await parseError(response);
+    errorLog('data', 'PUT data failed', { status: response.status, error, spaceId, path });
     throw createApiError(response.status, error);
   }
 
-  return (await response.json()) as DataSetResponse;
+  const result = (await response.json()) as DataSetResponse;
+  debugLog('data', 'PUT data ok', { status: response.status, spaceId, path, serverTimestamp: result.server_timestamp });
+  return result;
 }
 
 /**
