@@ -129,7 +129,6 @@ class S3BlobStore(BlobStore):
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If this exact reference already exists
         """
         # Validate blob_id format and type
         self._validate_blob_id(blob_id)
@@ -149,23 +148,30 @@ class S3BlobStore(BlobStore):
 
         # Read existing metadata or initialize empty
         metadata = {"references": {}}
-        if blob_exists:
-            try:
-                response = self.s3_client.get_object(
-                    Bucket=self.bucket_name,
-                    Key=metadata_key
-                )
-                metadata_json = response["Body"].read().decode('utf-8')
-                metadata = json.loads(metadata_json)
-            except self.ClientError:
-                metadata = {"references": {}}
+        try:
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=metadata_key
+            )
+            metadata_json = response["Body"].read().decode('utf-8')
+            metadata = json.loads(metadata_json)
+        except self.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code not in ("NoSuchKey", "404"):
+                raise
 
         # Check if this exact reference already exists
         ref_key = self._get_reference_key(space_id, uploaded_by)
         if ref_key in metadata.get("references", {}):
-            raise FileExistsError(
-                f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
-            )
+            # Idempotent re-upload: ensure content exists, then no-op.
+            if not blob_exists:
+                self.s3_client.put_object(
+                    Bucket=self.bucket_name,
+                    Key=s3_key,
+                    Body=data,
+                    ContentType="application/octet-stream"
+                )
+            return
 
         # Add the new reference
         metadata["references"][ref_key] = {
@@ -206,7 +212,6 @@ class S3BlobStore(BlobStore):
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If this exact reference already exists
         """
         # Validate blob_id format and type
         self._validate_blob_id(blob_id)
@@ -231,9 +236,8 @@ class S3BlobStore(BlobStore):
         # Check if this exact reference already exists
         ref_key = self._get_reference_key(space_id, uploaded_by)
         if ref_key in metadata.get("references", {}):
-            raise FileExistsError(
-                f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
-            )
+            # Idempotent reference add
+            return
 
         # Add the new reference
         metadata["references"][ref_key] = {
@@ -391,16 +395,6 @@ class S3BlobStore(BlobStore):
         self._validate_blob_id(blob_id)
 
         s3_key = self._get_s3_key(blob_id)
-
-        # Check if blob already exists
-        try:
-            self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
-            # If we get here, object exists - raise error
-            raise FileExistsError(f"Blob {blob_id} already exists")
-        except self.ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
-            if error_code != "404":
-                raise
 
         # Extract SHA256 hash from blob_id and encode as base64 for S3
         hash_bytes = extract_hash(blob_id)

@@ -634,6 +634,7 @@ paths:
       description: |
         Upload encrypted binary data (attachments, images, etc.) with explicit blob_id.
         The blob_id must match the SHA256 hash of the content.
+        Re-uploading the same blob_id is allowed and treated as idempotent.
         Blobs are scoped to the space - only space members can access them.
       parameters:
         - $ref: '#/components/parameters/SpaceId'
@@ -689,12 +690,6 @@ paths:
                 $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '409':
-          description: Blob already exists (duplicate content-addressed identifier)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
         '413':
           description: Blob too large (max 100 MB)
           content:

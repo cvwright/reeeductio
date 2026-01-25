@@ -33,7 +33,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 from test_blob_storage import (
     generic_blob_upload,
-    generic_blob_duplicate_reference_rejection,
+    generic_blob_duplicate_reference_idempotent,
     generic_blob_invalid_id_rejection,
     generic_blob_retrieval_nonexistent,
     generic_blob_reference_removal,
@@ -51,9 +51,9 @@ def test_s3_blob_upload(s3_blob_store, crypto):
     generic_blob_upload(s3_blob_store, crypto)
 
 
-def test_s3_blob_duplicate_reference_rejection(s3_blob_store, crypto):
-    """Test that S3 store rejects duplicate references"""
-    generic_blob_duplicate_reference_rejection(s3_blob_store, crypto)
+def test_s3_blob_duplicate_reference_idempotent(s3_blob_store, crypto):
+    """Test that S3 store allows duplicate references (idempotent)"""
+    generic_blob_duplicate_reference_idempotent(s3_blob_store, crypto)
 
 
 def test_s3_blob_invalid_id_rejection(s3_blob_store):
@@ -97,17 +97,17 @@ def test_s3_get_upload_url(s3_blob_store, crypto):
     assert s3_blob_store.bucket_name in upload_url
 
 
-def test_s3_get_upload_url_existing_blob_raises(s3_blob_store, crypto):
-    """Test that requesting upload URL for existing blob raises FileExistsError"""
+def test_s3_get_upload_url_existing_blob_allows(s3_blob_store, crypto):
+    """Test that requesting upload URL for existing blob is allowed"""
     blob_data = b"Existing blob content"
     blob_id = crypto.compute_blob_id(blob_data)
 
     # First, add the blob
     s3_blob_store.add_blob(blob_id, blob_data, "space1", "user1")
 
-    # Requesting upload URL should fail
-    with pytest.raises(FileExistsError):
-        s3_blob_store.get_upload_url(blob_id)
+    # Requesting upload URL should succeed
+    upload_url = s3_blob_store.get_upload_url(blob_id)
+    assert upload_url is not None
 
 
 def test_s3_get_download_url(s3_blob_store, crypto):

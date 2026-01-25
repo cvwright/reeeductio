@@ -84,6 +84,7 @@ class BlobStore(ABC):
 
         If the blob content already exists, only adds a new reference.
         If the blob content doesn't exist, stores the content and creates the first reference.
+        If the exact reference already exists, this call is idempotent and succeeds without changes.
 
         Args:
             blob_id: Content-addressed identifier for the blob
@@ -149,7 +150,6 @@ class BlobStore(ABC):
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If this exact reference already exists
         """
         raise NotImplementedError(
             "add_blob_reference not implemented for this blob store"

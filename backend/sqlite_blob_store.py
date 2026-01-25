@@ -85,39 +85,30 @@ class SqliteBlobStore(BlobStore):
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If this exact reference already exists
         """
         # Validate blob_id format and type
         self._validate_blob_id(blob_id)
 
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
 
-                # Check if blob content already exists
-                cursor.execute("SELECT blob_id FROM blobs WHERE blob_id = ?", (blob_id,))
-                blob_exists = cursor.fetchone() is not None
+            # Check if blob content already exists
+            cursor.execute("SELECT blob_id FROM blobs WHERE blob_id = ?", (blob_id,))
+            blob_exists = cursor.fetchone() is not None
 
-                # Only write content if it doesn't exist
-                if not blob_exists:
-                    cursor.execute("""
-                        INSERT INTO blobs (blob_id, data, size)
-                        VALUES (?, ?, ?)
-                    """, (blob_id, data, len(data)))
-
-                # Always add the reference (will fail if duplicate)
+            # Only write content if it doesn't exist
+            if not blob_exists:
                 cursor.execute("""
-                    INSERT INTO blob_references
-                    (blob_id, space_id, uploaded_by, uploaded_at)
-                    VALUES (?, ?, ?, ?)
-                """, (blob_id, space_id, uploaded_by, int(time.time() * 1000)))
-        except sqlite3.IntegrityError as e:
-            # Convert SQLite UNIQUE constraint error to FileExistsError
-            if "UNIQUE constraint failed" in str(e):
-                raise FileExistsError(
-                    f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
-                )
-            raise
+                    INSERT INTO blobs (blob_id, data, size)
+                    VALUES (?, ?, ?)
+                """, (blob_id, data, len(data)))
+
+            # Idempotent reference add (ignore duplicates)
+            cursor.execute("""
+                INSERT OR IGNORE INTO blob_references
+                (blob_id, space_id, uploaded_by, uploaded_at)
+                VALUES (?, ?, ?, ?)
+            """, (blob_id, space_id, uploaded_by, int(time.time() * 1000)))
 
     def add_blob_reference(self, blob_id: str, space_id: str, uploaded_by: str) -> None:
         """
@@ -134,28 +125,19 @@ class SqliteBlobStore(BlobStore):
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If this exact reference already exists
         """
         # Validate blob_id format and type
         self._validate_blob_id(blob_id)
 
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
 
-                # Add the reference (will fail if blob doesn't exist due to FK,
-                # or if duplicate reference)
-                cursor.execute("""
-                    INSERT INTO blob_references
-                    (blob_id, space_id, uploaded_by, uploaded_at)
-                    VALUES (?, ?, ?, ?)
-                """, (blob_id, space_id, uploaded_by, int(time.time() * 1000)))
-        except sqlite3.IntegrityError as e:
-            if "UNIQUE constraint failed" in str(e):
-                raise FileExistsError(
-                    f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
-                )
-            raise
+            # Add the reference (ignores duplicates; FK still enforced)
+            cursor.execute("""
+                INSERT OR IGNORE INTO blob_references
+                (blob_id, space_id, uploaded_by, uploaded_at)
+                VALUES (?, ?, ?, ?)
+            """, (blob_id, space_id, uploaded_by, int(time.time() * 1000)))
 
     def get_blob(self, blob_id: str) -> Optional[bytes]:
         """Retrieve a blob from the database"""
