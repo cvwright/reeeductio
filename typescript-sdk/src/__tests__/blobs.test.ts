@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { computeBlobId, uploadBlob, downloadBlob, deleteBlob } from '../blobs.js';
-import { generateKeyPair, toSpaceId, computeHash, stringToBytes } from '../crypto.js';
+import { generateKeyPair, toSpaceId, stringToBytes } from '../crypto.js';
 
 describe('computeBlobId', () => {
   it('should compute a content-addressed blob ID', () => {
