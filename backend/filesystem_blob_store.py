@@ -68,7 +68,6 @@ class FilesystemBlobStore(BlobStore):
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If this exact reference already exists
         """
         # Validate blob_id format and type
         self._validate_blob_id(blob_id)
@@ -89,9 +88,12 @@ class FilesystemBlobStore(BlobStore):
         # Check if this exact reference already exists
         ref_key = self._get_reference_key(space_id, uploaded_by)
         if ref_key in metadata["references"]:
-            raise FileExistsError(
-                f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
-            )
+            # Idempotent re-upload: ensure content exists, then no-op.
+            if not blob_path.exists():
+                temp_blob_path = Path(str(blob_path) + '.tmp')
+                temp_blob_path.write_bytes(data)
+                temp_blob_path.replace(blob_path)
+            return
 
         # Add the new reference
         metadata["references"][ref_key] = {
@@ -133,7 +135,6 @@ class FilesystemBlobStore(BlobStore):
 
         Raises:
             ValueError: If blob_id is invalid or not a BLOB type
-            FileExistsError: If this exact reference already exists
         """
         # Validate blob_id format and type
         self._validate_blob_id(blob_id)
@@ -153,9 +154,8 @@ class FilesystemBlobStore(BlobStore):
         # Check if this exact reference already exists
         ref_key = self._get_reference_key(space_id, uploaded_by)
         if ref_key in metadata["references"]:
-            raise FileExistsError(
-                f"Blob {blob_id} already has reference from {space_id}/{uploaded_by}"
-            )
+            # Idempotent reference add
+            return
 
         # Add the new reference
         metadata["references"][ref_key] = {

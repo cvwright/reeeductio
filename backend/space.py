@@ -1066,7 +1066,6 @@ class Space:
 
         Raises:
             ValueError: If authorization fails, blob_id mismatch, or blob_store not configured
-            FileExistsError: If blob reference already exists
         """
         if not self.blob_store:
             raise ValueError("Blob store not configured for this space")

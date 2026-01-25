@@ -24,8 +24,8 @@ def generic_blob_upload(blob_store: BlobStore, crypto):
     assert retrieved == blob_data
 
 
-def generic_blob_duplicate_reference_rejection(blob_store: BlobStore, crypto):
-    """Generic test that store rejects duplicate references"""
+def generic_blob_duplicate_reference_idempotent(blob_store: BlobStore, crypto):
+    """Generic test that store allows duplicate references (idempotent)"""
     blob_data = b"This is encrypted blob content"
     blob_id = crypto.compute_blob_id(blob_data)
     space_id = "test_space"
@@ -33,9 +33,13 @@ def generic_blob_duplicate_reference_rejection(blob_store: BlobStore, crypto):
 
     blob_store.add_blob(blob_id, blob_data, space_id, user_id)
 
-    # Same space/user reference should be rejected
-    with pytest.raises(FileExistsError):
-        blob_store.add_blob(blob_id, blob_data, space_id, user_id)
+    # Same space/user reference should be a no-op
+    blob_store.add_blob(blob_id, blob_data, space_id, user_id)
+
+    metadata = blob_store.get_blob_metadata(blob_id)
+    assert metadata is not None
+    assert metadata.get_reference(space_id, user_id) is not None
+    assert len(metadata.references) == 1
 
 
 def generic_blob_invalid_id_rejection(blob_store: BlobStore):
@@ -107,9 +111,9 @@ def test_fs_blob_upload(fs_blob_store, crypto):
     generic_blob_upload(fs_blob_store, crypto)
 
 
-def test_fs_blob_duplicate_reference_rejection(fs_blob_store, crypto):
-    """Test that filesystem store rejects duplicate references"""
-    generic_blob_duplicate_reference_rejection(fs_blob_store, crypto)
+def test_fs_blob_duplicate_reference_idempotent(fs_blob_store, crypto):
+    """Test that filesystem store allows duplicate references (idempotent)"""
+    generic_blob_duplicate_reference_idempotent(fs_blob_store, crypto)
 
 
 def test_fs_blob_invalid_id_rejection(fs_blob_store):
@@ -146,9 +150,9 @@ def test_db_blob_upload(db_blob_store, crypto):
     generic_blob_upload(db_blob_store, crypto)
 
 
-def test_db_blob_duplicate_reference_rejection(db_blob_store, crypto):
-    """Test that database store rejects duplicate references"""
-    generic_blob_duplicate_reference_rejection(db_blob_store, crypto)
+def test_db_blob_duplicate_reference_idempotent(db_blob_store, crypto):
+    """Test that database store allows duplicate references (idempotent)"""
+    generic_blob_duplicate_reference_idempotent(db_blob_store, crypto)
 
 
 def test_db_blob_invalid_id_rejection(db_blob_store):
