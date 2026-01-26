@@ -147,7 +147,7 @@ export async function setData(
   }
 
   const result = (await response.json()) as DataSetResponse;
-  debugLog('data', 'PUT data ok', { status: response.status, spaceId, path, serverTimestamp: result.server_timestamp });
+  debugLog('data', 'PUT data ok', { status: response.status, spaceId, path, signedAt: result.signed_at });
   return result;
 }
 
