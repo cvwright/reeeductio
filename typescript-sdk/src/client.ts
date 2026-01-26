@@ -544,7 +544,7 @@ export class Space {
     // Grant capabilities to the tool
     if (options?.capabilities) {
       for (const [capabilityId, capability] of Object.entries(options.capabilities)) {
-        await this.addToolCapability(toolId, capabilityId, capability);
+        await this.grantCapabilityToTool(toolId, capabilityId, capability);
       }
     }
 
@@ -552,10 +552,10 @@ export class Space {
   }
 
   /**
-   * Add a capability to a tool.
+   * Grant a capability to a tool.
    *
    * Capabilities define what operations a tool can perform. Tools have NO
-   * ambient authority - they can only use explicitly granted capabilities.
+   * inherited authority from roles - they can only use explicitly granted capabilities.
    *
    * @param toolId - The tool's typed identifier (starts with 'T')
    * @param capabilityId - Unique identifier for this capability (e.g., 'read_messages', 'post_images')
@@ -566,19 +566,19 @@ export class Space {
    * @example
    * ```typescript
    * // Grant read access to all state
-   * await space.addToolCapability(toolId, 'read_all', {
+   * await space.grantCapabilityToTool(toolId, 'read_all', {
    *   op: 'read',
    *   path: 'state/{...}',
    * });
    *
    * // Grant write access to a specific path
-   * await space.addToolCapability(toolId, 'write_sensor_data', {
+   * await space.grantCapabilityToTool(toolId, 'write_sensor_data', {
    *   op: 'write',
    *   path: 'state/sensors/{self}/{...}',
    * });
    * ```
    */
-  async addToolCapability(
+  async grantCapabilityToTool(
     toolId: string,
     capabilityId: string,
     capability: Capability,
@@ -587,6 +587,54 @@ export class Space {
     const capData = JSON.stringify(capability);
     return this.setPlaintextState(
       `auth/tools/${toolId}/rights/${capabilityId}`,
+      capData,
+      prevHash
+    );
+  }
+
+  /**
+   * Grant a capability to a user.
+   *
+   * Capabilities define what operations a user can perform. Users can also
+   * inherit capabilities from roles they are assigned to.
+   *
+   * @param userId - The user's typed identifier (starts with 'U')
+   * @param capabilityId - Unique identifier for this capability (e.g., 'read_messages', 'post_chat')
+   * @param capability - The capability to grant
+   * @param prevHash - Previous state message hash (optional, fetched if not provided)
+   * @returns MessageCreated with message_hash and server_timestamp
+   *
+   * @example
+   * ```typescript
+   * // Grant read access to all profiles
+   * await space.grantCapabilityToUser(userId, 'read_profiles', {
+   *   op: 'read',
+   *   path: 'state/profiles/{...}',
+   * });
+   *
+   * // Grant write access only to user's own profile
+   * await space.grantCapabilityToUser(userId, 'write_own_profile', {
+   *   op: 'write',
+   *   path: 'state/profiles/{self}',
+   * });
+   *
+   * // Grant create access with ownership restriction
+   * await space.grantCapabilityToUser(userId, 'create_posts', {
+   *   op: 'create',
+   *   path: 'state/posts/{...}',
+   *   must_be_owner: true,
+   * });
+   * ```
+   */
+  async grantCapabilityToUser(
+    userId: string,
+    capabilityId: string,
+    capability: Capability,
+    prevHash?: string | null
+  ): Promise<MessageCreated> {
+    const capData = JSON.stringify(capability);
+    return this.setPlaintextState(
+      `auth/users/${userId}/rights/${capabilityId}`,
       capData,
       prevHash
     );
