@@ -4,7 +4,8 @@
  * Provides utilities for uploading, downloading, and managing encrypted blobs.
  */
 
-import { computeHash, toBlobId, encodeBase64 } from './crypto.js';
+import { computeHash, toBlobId, encodeBase64, encryptAesGcm, decryptAesGcm } from './crypto.js';
+import { randomBytes } from '@noble/ciphers/utils.js';
 import { debugLog, errorLog, warnLog } from './debug.js';
 import type { BlobCreated, ApiError } from './types.js';
 import { createApiError, BlobError } from './exceptions.js';
@@ -23,7 +24,7 @@ export function computeBlobId(data: Uint8Array): string {
 }
 
 /**
- * Upload encrypted blob to the space.
+ * Upload plaintext blob to the space.
  *
  * The blob_id is computed from the content hash.
  *
@@ -105,14 +106,56 @@ export async function uploadBlob(
 }
 
 /**
- * Download encrypted blob from the space.
+ * Result of encrypting and uploading a blob.
+ */
+export interface EncryptedBlobCreated extends BlobCreated {
+  /** 32-byte AES-256 data encryption key (DEK) used to encrypt the blob */
+  key: Uint8Array;
+}
+
+/**
+ * Encrypt and upload a blob to the space.
+ *
+ * Generates a random AES-256 data encryption key (DEK), encrypts the data
+ * using AES-GCM-256, and uploads the encrypted blob.
+ * The blob_id is computed from the encrypted content hash.
+ *
+ * @param fetchFn - Fetch function
+ * @param baseUrl - API base URL
+ * @param token - JWT bearer token
+ * @param spaceId - Typed space identifier
+ * @param data - Plaintext blob data to encrypt
+ * @param associatedData - Optional additional authenticated data (AAD)
+ * @returns EncryptedBlobCreated with blob_id, size, and the generated DEK
+ */
+export async function encryptAndUploadBlob(
+  fetchFn: typeof fetch,
+  baseUrl: string,
+  token: string,
+  spaceId: string,
+  data: Uint8Array,
+  associatedData?: Uint8Array
+): Promise<EncryptedBlobCreated> {
+  // Generate random 32-byte DEK
+  const key = randomBytes(32);
+
+  debugLog('blobs', 'Encrypting blob', { plaintextBytes: data.length });
+  const encrypted = encryptAesGcm(data, key, associatedData);
+  debugLog('blobs', 'Blob encrypted', { encryptedBytes: encrypted.length });
+
+  const result = await uploadBlob(fetchFn, baseUrl, token, spaceId, encrypted);
+  return { ...result, key };
+}
+
+/**
+ * Download plaintext blob from the space.
  *
  * @param fetchFn - Fetch function
  * @param baseUrl - API base URL
  * @param token - JWT bearer token
  * @param spaceId - Typed space identifier
  * @param blobId - Typed blob identifier
- * @returns Encrypted blob data
+ * @returns Blob data
  */
 export async function downloadBlob(
   fetchFn: typeof fetch,
@@ -163,6 +206,39 @@ export async function downloadBlob(
   // Direct download (200)
   debugLog('blobs', 'GET blob ok', { status: response.status, blobId });
   return new Uint8Array(await response.arrayBuffer());
+}
+
+/**
+ * Download and decrypt a blob from the space.
+ *
+ * Downloads the encrypted blob and decrypts it using AES-GCM-256 with
+ * the provided data encryption key (DEK).
+ *
+ * @param fetchFn - Fetch function
+ * @param baseUrl - API base URL
+ * @param token - JWT bearer token
+ * @param spaceId - Typed space identifier
+ * @param blobId - Typed blob identifier
+ * @param key - 32-byte AES-256 data encryption key (DEK)
+ * @param associatedData - Optional additional authenticated data (AAD)
+ * @returns Decrypted plaintext blob data
+ */
+export async function downloadAndDecryptBlob(
+  fetchFn: typeof fetch,
+  baseUrl: string,
+  token: string,
+  spaceId: string,
+  blobId: string,
+  key: Uint8Array,
+  associatedData?: Uint8Array
+): Promise<Uint8Array> {
+  const encrypted = await downloadBlob(fetchFn, baseUrl, token, spaceId, blobId);
+
+  debugLog('blobs', 'Decrypting blob', { blobId, encryptedBytes: encrypted.length });
+  const plaintext = decryptAesGcm(encrypted, key, associatedData);
+  debugLog('blobs', 'Blob decrypted', { blobId, plaintextBytes: plaintext.length });
+
+  return plaintext;
 }
 
 /**
