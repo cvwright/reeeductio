@@ -20,7 +20,7 @@ import {
 import { postMessage, getMessages, getMessage } from './messages.js';
 import { getState, setState, getStateHistory } from './state.js';
 import { getData, setData } from './kvdata.js';
-import { uploadBlob, downloadBlob, deleteBlob } from './blobs.js';
+import { uploadBlob, downloadBlob, deleteBlob, encryptAndUploadBlob, downloadAndDecryptBlob } from './blobs.js';
 import type {
   KeyPair,
   Message,
@@ -34,6 +34,7 @@ import type {
   ToolCreated,
   Capability,
 } from './types.js';
+import type { EncryptedBlobCreated } from './blobs.js';
 import { createApiError } from './exceptions.js';
 
 /**
@@ -55,8 +56,6 @@ export class Space {
 
   /** Derived key for message encryption (32 bytes) */
   readonly messageKey: Uint8Array;
-  /** Derived key for blob encryption (32 bytes) */
-  readonly blobKey: Uint8Array;
   /** Derived key for data encryption (32 bytes) */
   readonly dataKey: Uint8Array;
   /** Derived key for state encryption (32 bytes) */
@@ -86,7 +85,6 @@ export class Space {
     // Derive encryption keys from symmetricRoot using HKDF
     // Include spaceId in info for domain separation
     this.messageKey = deriveKey(symmetricRoot, `message key | ${spaceId}`);
-    this.blobKey = deriveKey(symmetricRoot, `blob key | ${spaceId}`);
     this.dataKey = deriveKey(symmetricRoot, `data key | ${spaceId}`);
     // State key is a topic key for the "state" topic
     this.stateKey = deriveKey(this.messageKey, 'topic key | state');
@@ -342,15 +340,15 @@ export class Space {
   }
 
   /**
-   * Encrypt and upload a blob.
+   * Encrypt and upload a blob using a random per-blob DEK.
    *
    * @param data - Plaintext blob data to encrypt and upload
-   * @returns BlobCreated with blob_id and size
+   * @param associatedData - Optional additional authenticated data (AAD)
+   * @returns EncryptedBlobCreated with blob_id, size, and the generated DEK
    */
-  async encryptAndUploadBlob(data: Uint8Array): Promise<BlobCreated> {
-    const encryptedData = encryptAesGcm(data, this.blobKey);
+  async encryptAndUploadBlob(data: Uint8Array, associatedData?: Uint8Array): Promise<EncryptedBlobCreated> {
     const token = await this.auth.getToken();
-    return uploadBlob(this.fetchFn, this.baseUrl, token, this.spaceId, encryptedData);
+    return encryptAndUploadBlob(this.fetchFn, this.baseUrl, token, this.spaceId, data, associatedData);
   }
 
   /**
@@ -365,15 +363,16 @@ export class Space {
   }
 
   /**
-   * Download and decrypt encrypted blob.
+   * Download and decrypt an encrypted blob using the provided DEK.
    *
    * @param blobId - Typed blob identifier
+   * @param key - 32-byte AES-256 data encryption key (DEK)
+   * @param associatedData - Optional additional authenticated data (AAD)
    * @returns Decrypted plaintext blob data
    */
-  async downloadAndDecryptBlob(blobId: string): Promise<Uint8Array> {
+  async downloadAndDecryptBlob(blobId: string, key: Uint8Array, associatedData?: Uint8Array): Promise<Uint8Array> {
     const token = await this.auth.getToken();
-    const encryptedData = await downloadBlob(this.fetchFn, this.baseUrl, token, this.spaceId, blobId);
-    return decryptAesGcm(encryptedData, this.blobKey);
+    return downloadAndDecryptBlob(this.fetchFn, this.baseUrl, token, this.spaceId, blobId, key, associatedData);
   }
 
   /**

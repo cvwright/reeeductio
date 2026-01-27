@@ -48,12 +48,10 @@ describe('Space', () => {
 
       // Verify keys are derived
       const expectedMessageKey = deriveKey(symmetricRoot, `message key | ${spaceId}`);
-      const expectedBlobKey = deriveKey(symmetricRoot, `blob key | ${spaceId}`);
       const expectedDataKey = deriveKey(symmetricRoot, `data key | ${spaceId}`);
       const expectedStateKey = deriveKey(expectedMessageKey, 'topic key | state');
 
       expect(space.messageKey).toEqual(expectedMessageKey);
-      expect(space.blobKey).toEqual(expectedBlobKey);
       expect(space.dataKey).toEqual(expectedDataKey);
       expect(space.stateKey).toEqual(expectedStateKey);
     });
