@@ -20,30 +20,29 @@ from .models import Message, MessageCreated
 
 
 def compute_message_hash(
+    space_id: str,
     topic_id: str,
-    msg_type: str,
     prev_hash: str | None,
-    data: bytes,
+    data_b64: str,
     sender: str,
 ) -> str:
     """
     Compute message hash for chain validation.
 
-    Hash is computed over: topic_id|type|prev_hash|data|sender
+    Hash is computed over: space_id|topic_id|prev_hash|data_b64|sender
 
     Args:
+        space_id: Typed space identifier
         topic_id: Topic identifier
-        msg_type: Message type/category (or state path for state messages)
         prev_hash: Typed hash of previous message (None for first message)
-        data: Encrypted message data
+        data_b64: Base64-encoded message data
         sender: Typed sender identifier
 
     Returns:
         Typed message hash (44-char base64)
     """
-    # Hash is over: topic_id|type|prev_hash|data|sender
-    prev_hash_str = prev_hash if prev_hash else ""
-    hash_input = f"{topic_id}|{msg_type}|{prev_hash_str}|".encode() + data + f"|{sender}".encode()
+    prev_hash_str = prev_hash if prev_hash else "null"
+    hash_input = f"{space_id}|{topic_id}|{prev_hash_str}|{data_b64}|{sender}".encode()
 
     hash_bytes = compute_hash(hash_input)
     return to_message_id(hash_bytes)
@@ -80,12 +79,15 @@ def post_message(
     Raises:
         ChainError: If message posting fails
     """
+    # Base64-encode data for the request and hash computation
+    data_b64 = encode_base64(data)
+
     # Compute message hash
     message_hash = compute_message_hash(
+        space_id=space_id,
         topic_id=topic_id,
-        msg_type=msg_type,
         prev_hash=prev_hash,
-        data=data,
+        data_b64=data_b64,
         sender=sender_public_key_typed,
     )
 
@@ -97,7 +99,7 @@ def post_message(
     body = {
         "type": msg_type,
         "prev_hash": prev_hash,
-        "data": encode_base64(data),
+        "data": data_b64,
         "message_hash": message_hash,
         "signature": encode_base64(signature),
     }
@@ -149,12 +151,15 @@ async def post_message_async(
     Raises:
         ChainError: If message posting fails
     """
+    # Base64-encode data for the request and hash computation
+    data_b64 = encode_base64(data)
+
     # Compute message hash
     message_hash = compute_message_hash(
+        space_id=space_id,
         topic_id=topic_id,
-        msg_type=msg_type,
         prev_hash=prev_hash,
-        data=data,
+        data_b64=data_b64,
         sender=sender_public_key_typed,
     )
 
@@ -166,7 +171,7 @@ async def post_message_async(
     body = {
         "type": msg_type,
         "prev_hash": prev_hash,
-        "data": encode_base64(data),
+        "data": data_b64,
         "message_hash": message_hash,
         "signature": encode_base64(signature),
     }
@@ -237,11 +242,12 @@ async def get_messages_async(
         raise ValidationError(f"Failed to get messages: {e}") from e
 
 
-def validate_message_chain(messages: list[Message]) -> bool:
+def validate_message_chain(space_id: str, messages: list[Message]) -> bool:
     """
     Validate that a list of messages forms a valid chain.
 
     Args:
+        space_id: Typed space identifier
         messages: List of Message objects in chronological order
 
     Returns:
@@ -259,15 +265,12 @@ def validate_message_chain(messages: list[Message]) -> bool:
             prev_hash = msg.message_hash
             continue
 
-        # Verify message hash
-        from .crypto import decode_base64
-
-        data_bytes = decode_base64(msg.data)
+        # Verify message hash — msg.data is already base64-encoded
         expected_hash = compute_message_hash(
+            space_id=space_id,
             topic_id=msg.topic_id,
-            msg_type=msg.type,
             prev_hash=msg.prev_hash,
-            data=data_bytes,
+            data_b64=msg.data,
             sender=msg.sender,
         )
 

@@ -163,7 +163,7 @@ class Space:
             NotFoundError: If no state exists at this path
         """
         message = state.get_state(self.client, self.space_id, path)
-        return message.data
+        return base64.b64decode(message.data).decode("utf-8")
     
     def get_encrypted_state(self, path: str) -> str:
         """
@@ -244,12 +244,8 @@ class Space:
         # Encrypt using state key
         encrypted_bytes = encrypt_aes_gcm(plaintext_bytes, self.state_key)
 
-        # Base64 encode
-        encrypted_b64 = base64.b64encode(encrypted_bytes).decode("ascii")
-
-        # Store as bytes
-        data_bytes = encrypted_b64.encode("utf-8")
-        return self._set_state(path, data_bytes, prev_hash)
+        # Pass encrypted bytes directly; post_message will base64-encode them
+        return self._set_state(path, encrypted_bytes, prev_hash)
 
     def _set_state(self, path: str, data: bytes, prev_hash: str | None = None) -> MessageCreated:
         """
@@ -269,9 +265,10 @@ class Space:
             If prev_hash is not provided, this will fetch the current chain head.
             This may cause conflicts if multiple clients are writing concurrently.
         """
-        # Fetch prev_hash if not provided
+        # Fetch prev_hash if not provided — request reverse-chronological to get chain head
         if prev_hash is None:
-            msgs = self.get_messages("state", limit=1)
+            far_future = 9999999999999
+            msgs = self.get_messages("state", from_timestamp=far_future, to_timestamp=0, limit=1)
             prev_hash = msgs[0].message_hash if msgs else None
 
         return state.set_state(
@@ -399,9 +396,10 @@ class Space:
         Note:
             If prev_hash is not provided, this will fetch the current chain head.
         """
-        # Fetch prev_hash if not provided
+        # Fetch prev_hash if not provided — request reverse-chronological to get chain head
         if prev_hash is None:
-            msgs = self.get_messages(topic_id, limit=1)
+            far_future = 9999999999999
+            msgs = self.get_messages(topic_id, from_timestamp=far_future, to_timestamp=0, limit=1)
             prev_hash = msgs[0].message_hash if msgs else None
 
         return messages.post_message(
@@ -695,7 +693,7 @@ class AdminClient:
         Raises:
             AuthenticationError: If authentication fails
         """
-        from .crypto import decode_base64, sign_data
+        from .crypto import encode_base64, sign_data
         from .exceptions import AuthenticationError
 
         with httpx.Client(base_url=self.base_url) as client:
@@ -712,8 +710,8 @@ class AdminClient:
             except Exception as e:
                 raise AuthenticationError(f"Failed to get admin challenge: {e}") from e
 
-            # Step 2: Sign the challenge
-            challenge_bytes = decode_base64(challenge_data["challenge"])
+            # Step 2: Sign the challenge string (UTF-8 encoded, not base64-decoded)
+            challenge_bytes = challenge_data["challenge"].encode("utf-8")
             signature = sign_data(challenge_bytes, self.keypair.private_key)
 
             # Step 3: Verify signature and get token
@@ -722,7 +720,7 @@ class AdminClient:
                     "/admin/auth/verify",
                     json={
                         "public_key": self.keypair.to_user_id(),
-                        "signature": signature.hex(),
+                        "signature": encode_base64(signature),
                         "challenge": challenge_data["challenge"],
                     },
                 )
@@ -915,7 +913,7 @@ class AsyncAdminClient:
         Raises:
             AuthenticationError: If authentication fails
         """
-        from .crypto import decode_base64, sign_data
+        from .crypto import encode_base64, sign_data
         from .exceptions import AuthenticationError
 
         async with httpx.AsyncClient(base_url=self.base_url) as client:
@@ -932,8 +930,8 @@ class AsyncAdminClient:
             except Exception as e:
                 raise AuthenticationError(f"Failed to get admin challenge: {e}") from e
 
-            # Step 2: Sign the challenge
-            challenge_bytes = decode_base64(challenge_data["challenge"])
+            # Step 2: Sign the challenge string (UTF-8 encoded, not base64-decoded)
+            challenge_bytes = challenge_data["challenge"].encode("utf-8")
             signature = sign_data(challenge_bytes, self.keypair.private_key)
 
             # Step 3: Verify signature and get token
@@ -942,7 +940,7 @@ class AsyncAdminClient:
                     "/admin/auth/verify",
                     json={
                         "public_key": self.keypair.to_user_id(),
-                        "signature": signature.hex(),
+                        "signature": encode_base64(signature),
                         "challenge": challenge_data["challenge"],
                     },
                 )
@@ -1319,7 +1317,8 @@ class AsyncSpace:
             MessageCreated with message_hash and server_timestamp
         """
         if prev_hash is None:
-            msgs = await self.get_messages(topic_id, limit=1)
+            far_future = 9999999999999
+            msgs = await self.get_messages(topic_id, from_timestamp=far_future, to_timestamp=0, limit=1)
             prev_hash = msgs[0].message_hash if msgs else None
 
         client = await self.get_client()
@@ -1350,7 +1349,7 @@ class AsyncSpace:
         """
         client = await self.get_client()
         message = await state.get_state_async(client, self.space_id, path)
-        return message.data
+        return base64.b64decode(message.data).decode("utf-8")
 
     async def get_encrypted_state(self, path: str) -> str:
         """
@@ -1402,14 +1401,13 @@ class AsyncSpace:
         """
         plaintext_bytes = data.encode("utf-8")
         encrypted_bytes = encrypt_aes_gcm(plaintext_bytes, self.state_key)
-        encrypted_b64 = base64.b64encode(encrypted_bytes).decode("ascii")
-        data_bytes = encrypted_b64.encode("utf-8")
-        return await self._set_state(path, data_bytes, prev_hash)
+        return await self._set_state(path, encrypted_bytes, prev_hash)
 
     async def _set_state(self, path: str, data: bytes, prev_hash: str | None = None) -> MessageCreated:
         """Internal: set state value at path."""
         if prev_hash is None:
-            msgs = await self.get_messages("state", limit=1)
+            far_future = 9999999999999
+            msgs = await self.get_messages("state", from_timestamp=far_future, to_timestamp=0, limit=1)
             prev_hash = msgs[0].message_hash if msgs else None
 
         client = await self.get_client()

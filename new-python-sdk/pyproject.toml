@@ -40,3 +40,6 @@ addopts = [
     "--strict-markers",
     "--tb=short",
 ]
+markers = [
+    "e2e: end-to-end tests requiring a running backend (docker-compose.e2e.yml)",
+]

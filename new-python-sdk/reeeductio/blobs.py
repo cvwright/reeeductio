@@ -60,21 +60,33 @@ def upload_blob(
             f"/spaces/{space_id}/blobs/{blob_id}",
             content=data,
             headers={"Content-Type": "application/octet-stream"},
+            follow_redirects=False,
         )
-        response.raise_for_status()
 
-        # Handle redirect to S3 (307)
+        # Handle redirect to S3 (307) before raise_for_status
         if response.status_code == 307:
             # Follow redirect to S3
             redirect_url = response.headers.get("Location")
             if not redirect_url:
                 raise BlobError("Received 307 redirect but no Location header")
 
-            # Upload to S3 directly
-            s3_response = client.put(redirect_url, content=data)
+            # Upload to S3 directly — use a clean client without auth headers
+            # Include checksum header required by the pre-signed URL
+            import base64 as b64mod
+            checksum_b64 = b64mod.b64encode(compute_hash(data)).decode("ascii")
+            s3_response = httpx.put(
+                redirect_url,
+                content=data,
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "x-amz-checksum-sha256": checksum_b64,
+                },
+            )
             s3_response.raise_for_status()
 
             return BlobCreated(blob_id=blob_id, size=len(data))
+
+        response.raise_for_status()
 
         # Direct upload (201)
         result = response.json()
@@ -118,21 +130,33 @@ async def upload_blob_async(
             f"/spaces/{space_id}/blobs/{blob_id}",
             content=data,
             headers={"Content-Type": "application/octet-stream"},
+            follow_redirects=False,
         )
-        response.raise_for_status()
 
-        # Handle redirect to S3 (307)
+        # Handle redirect to S3 (307) before raise_for_status
         if response.status_code == 307:
             # Follow redirect to S3
             redirect_url = response.headers.get("Location")
             if not redirect_url:
                 raise BlobError("Received 307 redirect but no Location header")
 
-            # Upload to S3 directly
-            s3_response = await client.put(redirect_url, content=data)
-            s3_response.raise_for_status()
+            # Upload to S3 directly — use a clean client without auth headers
+            import base64 as b64mod
+            checksum_b64 = b64mod.b64encode(compute_hash(data)).decode("ascii")
+            async with httpx.AsyncClient() as s3_client:
+                s3_response = await s3_client.put(
+                    redirect_url,
+                    content=data,
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "x-amz-checksum-sha256": checksum_b64,
+                    },
+                )
+                s3_response.raise_for_status()
 
             return BlobCreated(blob_id=blob_id, size=len(data))
+
+        response.raise_for_status()
 
         # Direct upload (201)
         result = response.json()
@@ -169,22 +193,21 @@ def download_blob(
         BlobError: If download fails
     """
     try:
-        response = client.get(f"/spaces/{space_id}/blobs/{blob_id}")
-        response.raise_for_status()
+        response = client.get(
+            f"/spaces/{space_id}/blobs/{blob_id}",
+            follow_redirects=False,
+        )
 
-        # Handle redirect to S3 (307)
+        # Handle redirect to S3 (307) before raise_for_status
         if response.status_code == 307:
-            # Follow redirect to S3
             redirect_url = response.headers.get("Location")
             if not redirect_url:
                 raise BlobError("Received 307 redirect but no Location header")
-
-            # Download from S3 directly
-            s3_response = client.get(redirect_url)
+            s3_response = httpx.get(redirect_url)
             s3_response.raise_for_status()
             return s3_response.content
 
-        # Direct download (200)
+        response.raise_for_status()
         return response.content
     except httpx.HTTPStatusError as e:
         raise BlobError(f"Failed to download blob: {e.response.text}") from e
@@ -212,22 +235,22 @@ async def download_blob_async(
         BlobError: If download fails
     """
     try:
-        response = await client.get(f"/spaces/{space_id}/blobs/{blob_id}")
-        response.raise_for_status()
+        response = await client.get(
+            f"/spaces/{space_id}/blobs/{blob_id}",
+            follow_redirects=False,
+        )
 
-        # Handle redirect to S3 (307)
+        # Handle redirect to S3 (307) before raise_for_status
         if response.status_code == 307:
-            # Follow redirect to S3
             redirect_url = response.headers.get("Location")
             if not redirect_url:
                 raise BlobError("Received 307 redirect but no Location header")
+            async with httpx.AsyncClient() as s3_client:
+                s3_response = await s3_client.get(redirect_url)
+                s3_response.raise_for_status()
+                return s3_response.content
 
-            # Download from S3 directly
-            s3_response = await client.get(redirect_url)
-            s3_response.raise_for_status()
-            return s3_response.content
-
-        # Direct download (200)
+        response.raise_for_status()
         return response.content
     except httpx.HTTPStatusError as e:
         raise BlobError(f"Failed to download blob: {e.response.text}") from e

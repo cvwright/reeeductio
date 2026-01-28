@@ -109,7 +109,6 @@ class DataEntry:
     Every entry is cryptographically signed.
     """
 
-    path: str  # slug-formatted path
     data: str  # base64-encoded data
     signature: str  # base64-encoded Ed25519 signature
     signed_by: str  # 44-char base64 user/tool ID

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from .crypto import decode_base64, sign_data
+from .crypto import encode_base64, sign_data
 from .exceptions import AuthenticationError
 from .models import AuthChallenge, AuthToken
 
@@ -90,8 +90,8 @@ class AuthSession:
             except Exception as e:
                 raise AuthenticationError(f"Failed to get challenge: {e}") from e
 
-            # Step 2: Sign the challenge
-            challenge_bytes = decode_base64(challenge.challenge)
+            # Step 2: Sign the challenge string (UTF-8 encoded, not base64-decoded)
+            challenge_bytes = challenge.challenge.encode("utf-8")
             signature = sign_data(challenge_bytes, self.private_key)
 
             # Step 3: Verify signature and get token
@@ -100,7 +100,7 @@ class AuthSession:
                     f"/spaces/{self.space_id}/auth/verify",
                     json={
                         "public_key": self.public_key_typed,
-                        "signature": signature.hex(),
+                        "signature": encode_base64(signature),
                         "challenge": challenge.challenge,
                     },
                 )
@@ -259,8 +259,8 @@ class AsyncAuthSession:
             except Exception as e:
                 raise AuthenticationError(f"Failed to get challenge: {e}") from e
 
-            # Step 2: Sign the challenge
-            challenge_bytes = decode_base64(challenge.challenge)
+            # Step 2: Sign the challenge string (UTF-8 encoded, not base64-decoded)
+            challenge_bytes = challenge.challenge.encode("utf-8")
             signature = sign_data(challenge_bytes, self.private_key)
 
             # Step 3: Verify signature and get token
@@ -269,7 +269,7 @@ class AsyncAuthSession:
                     f"/spaces/{self.space_id}/auth/verify",
                     json={
                         "public_key": self.public_key_typed,
-                        "signature": signature.hex(),
+                        "signature": encode_base64(signature),
                         "challenge": challenge.challenge,
                     },
                 )
