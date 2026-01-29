@@ -9,6 +9,7 @@ A capability-based, end-to-end encrypted messaging system with:
 """
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Query, Path as PathParam, WebSocket, WebSocketDisconnect, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
@@ -51,6 +52,15 @@ app = FastAPI(
     title="E2EE PubSub Messaging API",
     description="End-to-end encrypted messaging with capability-based authorization",
     version="1.0.0"
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # JWT configuration
