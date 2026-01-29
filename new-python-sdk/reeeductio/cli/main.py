@@ -2,7 +2,7 @@
 
 import click
 
-from .commands import auth, blob, key, space
+from .commands import auth, blob, key, space, tool, user
 
 
 @click.group()
@@ -33,6 +33,8 @@ cli.add_command(space.space)
 cli.add_command(key.key)
 cli.add_command(blob.blob)
 cli.add_command(auth.auth)
+cli.add_command(user.user)
+cli.add_command(tool.tool)
 
 
 if __name__ == "__main__":

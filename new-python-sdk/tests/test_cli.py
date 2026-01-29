@@ -223,6 +223,116 @@ class TestAuthCommands:
         assert "64 hex characters" in result.output
 
 
+class TestUserCommands:
+    """Tests for user management commands."""
+
+    def test_user_add_missing_space_key(self, runner):
+        """Test user add without space key."""
+        result = runner.invoke(cli, ["user", "add", "U" + "A" * 43])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_user_add_missing_symmetric_root(self, runner):
+        """Test user add without symmetric root."""
+        result = runner.invoke(cli, ["user", "add", "U" + "A" * 43, "-k", "ab" * 32])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_user_add_invalid_user_id_length(self, runner):
+        """Test user add with invalid user ID length."""
+        result = runner.invoke(
+            cli,
+            ["user", "add", "short", "-k", "ab" * 32, "-s", "cd" * 32],
+        )
+
+        assert result.exit_code != 0
+        assert "44 characters" in result.output
+
+    def test_user_add_wrong_id_type(self, runner):
+        """Test user add with a non-USER identifier."""
+        # Generate a space ID (starts with C) instead of user ID
+        gen_result = runner.invoke(cli, ["key", "generate", "--output-format", "json"])
+        key_data = json.loads(gen_result.output)
+        space_id = key_data["space_id"]  # This is a SPACE type, not USER
+
+        result = runner.invoke(
+            cli,
+            ["user", "add", space_id, "-k", "ab" * 32, "-s", "cd" * 32],
+        )
+
+        assert result.exit_code != 0
+        assert "Expected USER" in result.output
+
+    def test_user_remove_missing_key(self, runner):
+        """Test user remove without space key."""
+        result = runner.invoke(cli, ["user", "remove", "U" + "A" * 43])
+
+        assert result.exit_code != 0
+
+    def test_user_list_missing_key(self, runner):
+        """Test user list without space key."""
+        result = runner.invoke(cli, ["user", "list"])
+
+        assert result.exit_code != 0
+
+
+class TestToolCommands:
+    """Tests for tool management commands."""
+
+    def test_tool_add_missing_space_key(self, runner):
+        """Test tool add without space key."""
+        result = runner.invoke(cli, ["tool", "add", "T" + "A" * 43])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_tool_add_missing_symmetric_root(self, runner):
+        """Test tool add without symmetric root."""
+        result = runner.invoke(cli, ["tool", "add", "T" + "A" * 43, "-k", "ab" * 32])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_tool_add_invalid_tool_id_length(self, runner):
+        """Test tool add with invalid tool ID length."""
+        result = runner.invoke(
+            cli,
+            ["tool", "add", "short", "-k", "ab" * 32, "-s", "cd" * 32],
+        )
+
+        assert result.exit_code != 0
+        assert "44 characters" in result.output
+
+    def test_tool_add_wrong_id_type(self, runner):
+        """Test tool add with a non-TOOL identifier."""
+        # Generate a user ID (starts with U) instead of tool ID
+        gen_result = runner.invoke(cli, ["key", "generate", "--output-format", "json"])
+        key_data = json.loads(gen_result.output)
+        user_id = key_data["user_id"]  # This is a USER type, not TOOL
+
+        result = runner.invoke(
+            cli,
+            ["tool", "add", user_id, "-k", "ab" * 32, "-s", "cd" * 32],
+        )
+
+        assert result.exit_code != 0
+        assert "Expected TOOL" in result.output
+
+    def test_tool_remove_missing_key(self, runner):
+        """Test tool remove without space key."""
+        result = runner.invoke(cli, ["tool", "remove", "T" + "A" * 43])
+
+        assert result.exit_code != 0
+
+    def test_tool_list_missing_key(self, runner):
+        """Test tool list without space key."""
+        result = runner.invoke(cli, ["tool", "list"])
+
+        assert result.exit_code != 0
+
+
 class TestGlobalOptions:
     """Tests for global CLI options."""
 
@@ -236,6 +346,8 @@ class TestGlobalOptions:
         assert "key" in result.output
         assert "blob" in result.output
         assert "auth" in result.output
+        assert "user" in result.output
+        assert "tool" in result.output
 
     def test_version(self, runner):
         """Test --version option."""
@@ -366,3 +478,243 @@ class TestBlobCommandsE2E:
             from reeeductio import NotFoundError
             with pytest.raises(NotFoundError):
                 space.download_plaintext_blob(blob_id)
+
+
+@pytest.mark.e2e
+class TestUserCommandsE2E:
+    """E2E tests for user management commands."""
+
+    def test_user_add_and_list(self, runner, fresh_keypair, symmetric_root):
+        """Test adding a user and listing users."""
+        from reeeductio import generate_keypair
+
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+        space_id = fresh_keypair.to_space_id()
+
+        # Generate a new user to add
+        new_user_keypair = generate_keypair()
+        new_user_id = new_user_keypair.to_user_id()
+
+        # Add the user
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "user", "add", new_user_id,
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert f"User added: {new_user_id}" in result.output
+        assert space_id in result.output
+
+        # List users
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "user", "list",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert new_user_id in result.output
+
+    def test_user_add_and_remove(self, runner, fresh_keypair, symmetric_root):
+        """Test adding and removing a user."""
+        from reeeductio import generate_keypair
+
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+
+        # Generate a new user to add
+        new_user_keypair = generate_keypair()
+        new_user_id = new_user_keypair.to_user_id()
+
+        # Add the user
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "user", "add", new_user_id,
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+        assert result.exit_code == 0
+
+        # Remove the user
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "user", "remove", new_user_id,
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert f"User removed: {new_user_id}" in result.output
+
+        # Verify user is no longer listed
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "user", "list",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+                "--output-format", "json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert new_user_id not in data["users"]
+
+    def test_user_list_json_format(self, runner, fresh_keypair, symmetric_root):
+        """Test user list with JSON output."""
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "user", "list",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+                "--output-format", "json",
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        data = json.loads(result.output)
+        assert "users" in data
+        assert isinstance(data["users"], list)
+
+
+@pytest.mark.e2e
+class TestToolCommandsE2E:
+    """E2E tests for tool management commands."""
+
+    def test_tool_add_and_list(self, runner, fresh_keypair, symmetric_root):
+        """Test adding a tool and listing tools."""
+        from reeeductio import generate_keypair
+
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+        space_id = fresh_keypair.to_space_id()
+
+        # Generate a new tool to add
+        new_tool_keypair = generate_keypair()
+        new_tool_id = new_tool_keypair.to_tool_id()
+
+        # Add the tool
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "tool", "add", new_tool_id,
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert f"Tool added: {new_tool_id}" in result.output
+        assert space_id in result.output
+
+        # List tools
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "tool", "list",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert new_tool_id in result.output
+
+    def test_tool_add_and_remove(self, runner, fresh_keypair, symmetric_root):
+        """Test adding and removing a tool."""
+        from reeeductio import generate_keypair
+
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+
+        # Generate a new tool to add
+        new_tool_keypair = generate_keypair()
+        new_tool_id = new_tool_keypair.to_tool_id()
+
+        # Add the tool
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "tool", "add", new_tool_id,
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+        assert result.exit_code == 0
+
+        # Remove the tool
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "tool", "remove", new_tool_id,
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert f"Tool removed: {new_tool_id}" in result.output
+
+        # Verify tool is no longer listed
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "tool", "list",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+                "--output-format", "json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert new_tool_id not in data["tools"]
+
+    def test_tool_list_json_format(self, runner, fresh_keypair, symmetric_root):
+        """Test tool list with JSON output."""
+        space_key_hex = fresh_keypair.private_key.hex()
+        sym_root_hex = symmetric_root.hex()
+
+        result = runner.invoke(
+            cli,
+            [
+                "--base-url", E2E_BASE_URL,
+                "tool", "list",
+                "-k", space_key_hex,
+                "-s", sym_root_hex,
+                "--output-format", "json",
+            ],
+        )
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        data = json.loads(result.output)
+        assert "tools" in data
+        assert isinstance(data["tools"], list)
