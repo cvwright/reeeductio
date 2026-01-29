@@ -597,6 +597,87 @@ class Space:
         )
 
 
+class AdminSpace(Space):
+    """
+    Client for interacting with the admin space to create new spaces.
+
+    Extends Space with the ability to register new spaces in the admin space.
+    The admin space is a special space that stores the registry of all spaces
+    and their creators.
+
+    Example:
+        admin_space = AdminSpace(
+            space_id=admin_space_id,
+            keypair=user_keypair,
+            symmetric_root=admin_symmetric_root,
+            base_url=base_url,
+        )
+
+        # Generate keypair for new space
+        new_space_keypair = generate_keypair()
+
+        # Register the space in the admin space
+        admin_space.create_space(new_space_keypair)
+    """
+
+    def create_space(self, space_keypair: Ed25519KeyPair) -> str:
+        """
+        Create and register a new space in the admin space.
+
+        This method:
+        1. Derives the space_id from the space keypair's public key
+        2. Creates a registration data structure with space_signature proving ownership
+        3. Writes the registration to spaces/{space_id} in the admin space
+        4. Indexes the space at users/{user_id}/spaces/{space_id}
+
+        Args:
+            space_keypair: Ed25519 keypair for the new space. The caller must
+                          retain this keypair to access the space later.
+
+        Returns:
+            The space_id of the newly created space
+
+        Raises:
+            ValidationError: If space registration fails
+        """
+        from datetime import datetime, timezone
+
+        from .crypto import encode_base64, sign_data
+
+        # Derive space_id from the space keypair
+        space_id = space_keypair.to_space_id()
+
+        # Get the user_id of the caller (who is creating the space)
+        created_by = self.keypair.to_user_id()
+
+        # Get current timestamp in milliseconds
+        created_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        # Create the canonical message to sign: {space_id}|{created_by}|{created_at}
+        canonical_message = f"{space_id}|{created_by}|{created_at}"
+
+        # Sign with the space's private key to prove ownership
+        signature = sign_data(canonical_message.encode("utf-8"), space_keypair.private_key)
+        space_signature = encode_base64(signature)
+
+        # Create the registration data
+        registration_data = {
+            "space_id": space_id,
+            "created_by": created_by,
+            "created_at": created_at,
+            "space_signature": space_signature,
+        }
+
+        # Write to spaces/{space_id} in the admin space
+        self.set_plaintext_state(f"spaces/{space_id}", json.dumps(registration_data))
+
+        # Index the space at users/{user_id}/spaces/{space_id}
+        index_data = {"space_id": space_id}
+        self.set_plaintext_state(f"users/{created_by}/spaces/{space_id}", json.dumps(index_data))
+
+        return space_id
+
+
 class AdminClient:
     """
     Admin client for authenticating to the admin space and getting its ID.
@@ -1511,3 +1592,83 @@ class AsyncSpace:
             signed_by=self.keypair.to_user_id(),
             private_key=self.keypair.private_key,
         )
+
+
+class AsyncAdminSpace(AsyncSpace):
+    """
+    Async client for interacting with the admin space to create new spaces.
+
+    Extends AsyncSpace with the ability to register new spaces in the admin space.
+    The admin space is a special space that stores the registry of all spaces
+    and their creators.
+
+    Example:
+        async with AsyncAdminSpace(
+            space_id=admin_space_id,
+            keypair=user_keypair,
+            symmetric_root=admin_symmetric_root,
+            base_url=base_url,
+        ) as admin_space:
+            # Generate keypair for new space
+            new_space_keypair = generate_keypair()
+
+            # Register the space in the admin space
+            space_id = await admin_space.create_space(new_space_keypair)
+    """
+
+    async def create_space(self, space_keypair: Ed25519KeyPair) -> str:
+        """
+        Create and register a new space in the admin space.
+
+        This method:
+        1. Derives the space_id from the space keypair's public key
+        2. Creates a registration data structure with space_signature proving ownership
+        3. Writes the registration to spaces/{space_id} in the admin space
+        4. Indexes the space at users/{user_id}/spaces/{space_id}
+
+        Args:
+            space_keypair: Ed25519 keypair for the new space. The caller must
+                          retain this keypair to access the space later.
+
+        Returns:
+            The space_id of the newly created space
+
+        Raises:
+            ValidationError: If space registration fails
+        """
+        from datetime import datetime, timezone
+
+        from .crypto import encode_base64, sign_data
+
+        # Derive space_id from the space keypair
+        space_id = space_keypair.to_space_id()
+
+        # Get the user_id of the caller (who is creating the space)
+        created_by = self.keypair.to_user_id()
+
+        # Get current timestamp in milliseconds
+        created_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        # Create the canonical message to sign: {space_id}|{created_by}|{created_at}
+        canonical_message = f"{space_id}|{created_by}|{created_at}"
+
+        # Sign with the space's private key to prove ownership
+        signature = sign_data(canonical_message.encode("utf-8"), space_keypair.private_key)
+        space_signature = encode_base64(signature)
+
+        # Create the registration data
+        registration_data = {
+            "space_id": space_id,
+            "created_by": created_by,
+            "created_at": created_at,
+            "space_signature": space_signature,
+        }
+
+        # Write to spaces/{space_id} in the admin space
+        await self.set_plaintext_state(f"spaces/{space_id}", json.dumps(registration_data))
+
+        # Index the space at users/{user_id}/spaces/{space_id}
+        index_data = {"space_id": space_id}
+        await self.set_plaintext_state(f"users/{created_by}/spaces/{space_id}", json.dumps(index_data))
+
+        return space_id
