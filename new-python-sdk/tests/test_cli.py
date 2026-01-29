@@ -66,8 +66,8 @@ class TestSpaceCommands:
         assert result.exit_code != 0
         assert "64 hex characters" in result.output
 
-    def test_space_info_valid_key(self, runner):
-        """Test space info with a valid private key."""
+    def test_space_info_valid_key_hex(self, runner):
+        """Test space info with a valid hex private key."""
         # First generate a key
         gen_result = runner.invoke(cli, ["key", "generate", "--output-format", "json"])
         key_data = json.loads(gen_result.output)
@@ -84,19 +84,62 @@ class TestSpaceCommands:
         assert key_data["space_id"] in result.output
         assert key_data["user_id"] in result.output
 
+    def test_space_info_valid_key_base64(self, runner):
+        """Test space info with a valid base64 private key."""
+        import base64
+
+        # First generate a key in hex
+        gen_result = runner.invoke(cli, ["key", "generate", "--output-format", "json"])
+        key_data = json.loads(gen_result.output)
+        private_key_hex = key_data["private_key_hex"]
+
+        # Convert to base64
+        private_bytes = bytes.fromhex(private_key_hex)
+        private_key_b64 = base64.b64encode(private_bytes).decode()
+
+        # Then get info using base64 key
+        result = runner.invoke(cli, ["space", "info", "-k", private_key_b64])
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert "Space ID:" in result.output
+        # Verify the IDs match what was generated
+        assert key_data["space_id"] in result.output
+        assert key_data["user_id"] in result.output
+
+    def test_space_info_valid_key_base64_urlsafe(self, runner):
+        """Test space info with a URL-safe base64 private key (no padding)."""
+        import base64
+
+        # First generate a key in hex
+        gen_result = runner.invoke(cli, ["key", "generate", "--output-format", "json"])
+        key_data = json.loads(gen_result.output)
+        private_key_hex = key_data["private_key_hex"]
+
+        # Convert to URL-safe base64 without padding
+        private_bytes = bytes.fromhex(private_key_hex)
+        private_key_b64 = base64.urlsafe_b64encode(private_bytes).decode().rstrip("=")
+
+        # Then get info using base64 key
+        result = runner.invoke(cli, ["space", "info", "-k", private_key_b64])
+
+        assert result.exit_code == 0, f"Failed with: {result.output}"
+        assert "Space ID:" in result.output
+        # Verify the IDs match what was generated
+        assert key_data["space_id"] in result.output
+
     def test_space_info_invalid_key_length(self, runner):
         """Test space info with invalid key length."""
         result = runner.invoke(cli, ["space", "info", "-k", "abc123"])
 
         assert result.exit_code != 0
-        assert "64 hex characters" in result.output
+        assert "64 hex chars or 43-44 base64 chars" in result.output
 
     def test_space_info_invalid_hex(self, runner):
         """Test space info with invalid hex characters."""
         result = runner.invoke(cli, ["space", "info", "-k", "g" * 64])
 
         assert result.exit_code != 0
-        assert "Invalid hex" in result.output
+        assert "Invalid key format" in result.output
 
     def test_space_info_missing_key(self, runner):
         """Test space info without providing key."""
@@ -215,7 +258,7 @@ class TestBlobCommands:
         )
 
         assert result.exit_code != 0
-        assert "64 hex characters" in result.output
+        assert "64 hex chars or 43-44 base64 chars" in result.output
 
 
 class TestAuthCommands:
@@ -233,7 +276,7 @@ class TestAuthCommands:
         result = runner.invoke(cli, ["auth", "test", "-k", "tooshort"])
 
         assert result.exit_code != 0
-        assert "64 hex characters" in result.output
+        assert "64 hex chars or 43-44 base64 chars" in result.output
 
 
 class TestUserCommands:

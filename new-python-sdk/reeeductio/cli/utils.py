@@ -1,5 +1,6 @@
 """Shared CLI utilities."""
 
+import base64
 import functools
 import sys
 
@@ -17,11 +18,15 @@ from ..exceptions import (
 )
 
 
-def parse_private_key(private_key_hex: str) -> Ed25519KeyPair:
-    """Parse a hex-encoded private key into an Ed25519KeyPair.
+def parse_private_key(private_key_str: str) -> Ed25519KeyPair:
+    """Parse a private key into an Ed25519KeyPair.
+
+    Accepts either hex or base64 encoding, detected by string length:
+    - 64 characters: hex encoding (32 bytes)
+    - 43-44 characters: base64 encoding (32 bytes, with or without padding)
 
     Args:
-        private_key_hex: 64-character hex string (32 bytes)
+        private_key_str: Private key as hex (64 chars) or base64 (43-44 chars)
 
     Returns:
         Ed25519KeyPair with derived public key
@@ -29,13 +34,28 @@ def parse_private_key(private_key_hex: str) -> Ed25519KeyPair:
     Raises:
         click.BadParameter: If the key format is invalid
     """
-    try:
-        if len(private_key_hex) != 64:
-            raise click.BadParameter(
-                f"Private key must be 64 hex characters (32 bytes), got {len(private_key_hex)}"
-            )
+    key_len = len(private_key_str)
 
-        private_bytes = bytes.fromhex(private_key_hex)
+    try:
+        if key_len == 64:
+            # Hex encoding: 64 hex chars = 32 bytes
+            private_bytes = bytes.fromhex(private_key_str)
+        elif key_len in (43, 44):
+            # Base64 encoding: 43-44 chars = 32 bytes
+            # Handle both standard and URL-safe base64, with or without padding
+            # Normalize: replace URL-safe chars and add padding if needed
+            b64_str = private_key_str.replace("-", "+").replace("_", "/")
+            if len(b64_str) == 43:
+                b64_str += "="
+            private_bytes = base64.b64decode(b64_str)
+            if len(private_bytes) != 32:
+                raise click.BadParameter(
+                    f"Base64-decoded key must be 32 bytes, got {len(private_bytes)}"
+                )
+        else:
+            raise click.BadParameter(
+                f"Private key must be 64 hex chars or 43-44 base64 chars, got {key_len} chars"
+            )
 
         # Derive public key from private key
         private_key = Ed25519PrivateKey.from_private_bytes(private_bytes)
@@ -48,7 +68,9 @@ def parse_private_key(private_key_hex: str) -> Ed25519KeyPair:
         return Ed25519KeyPair(private_key=private_bytes, public_key=public_bytes)
 
     except ValueError as e:
-        raise click.BadParameter(f"Invalid hex format: {e}")
+        raise click.BadParameter(f"Invalid key format: {e}")
+    except Exception as e:
+        raise click.BadParameter(f"Failed to parse private key: {e}")
 
 
 def handle_errors(func):
