@@ -6,14 +6,9 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { Space } from '../../client.js';
-import { generateKeyPair, toSpaceId, decodeBase64, bytesToString } from '../../crypto.js';
+import { generateKeyPair, toSpaceId, stringToBytes, bytesToString } from '../../crypto.js';
 import { NotFoundError } from '../../exceptions.js';
 import { E2E_BACKEND_URL, waitForBackend, randomStatePath } from './setup.js';
-
-/** Helper to decode base64 state data returned by getPlaintextState */
-function decodePlaintext(base64: string): string {
-  return bytesToString(decodeBase64(base64));
-}
 
 describe('E2ET: State', () => {
   beforeAll(async () => {
@@ -36,16 +31,16 @@ describe('E2ET: State', () => {
     const stateData = 'Hello from state e2e test!';
 
     // Set state
-    const result = await space.setPlaintextState(path, stateData, null);
+    const result = await space.setPlaintextState(path, stringToBytes(stateData), null);
 
     expect(result.message_hash).toBeDefined();
     expect(result.message_hash[0]).toBe('M');
     expect(result.server_timestamp).toBeDefined();
 
-    // Get state (returns base64, need to decode)
+    // Get state
     const retrieved = await space.getPlaintextState(path);
 
-    expect(decodePlaintext(retrieved)).toBe(stateData);
+    expect(bytesToString(retrieved)).toBe(stateData);
   });
 
   it('should set and get encrypted state', async () => {
@@ -64,14 +59,14 @@ describe('E2ET: State', () => {
     const stateData = 'Secret state data!';
 
     // Set encrypted state
-    const result = await space.setEncryptedState(path, stateData, null);
+    const result = await space.setEncryptedState(path, stringToBytes(stateData), null);
 
     expect(result.message_hash).toBeDefined();
 
     // Get and decrypt state
     const retrieved = await space.getEncryptedState(path);
 
-    expect(retrieved).toBe(stateData);
+    expect(bytesToString(retrieved)).toBe(stateData);
   });
 
   it('should update state with new value', async () => {
@@ -89,17 +84,17 @@ describe('E2ET: State', () => {
     const path = randomStatePath();
 
     // Set initial state
-    const result1 = await space.setPlaintextState(path, 'initial value', null);
+    const result1 = await space.setPlaintextState(path, stringToBytes('initial value'), null);
 
     // Update state (prev_hash should be auto-fetched)
-    const result2 = await space.setPlaintextState(path, 'updated value');
+    const result2 = await space.setPlaintextState(path, stringToBytes('updated value'));
 
     expect(result2.message_hash).not.toBe(result1.message_hash);
 
     // Get current state - should be the updated value
     const retrieved = await space.getPlaintextState(path);
 
-    expect(decodePlaintext(retrieved)).toBe('updated value');
+    expect(bytesToString(retrieved)).toBe('updated value');
   });
 
   it('should track state history', async () => {
@@ -118,9 +113,9 @@ describe('E2ET: State', () => {
     const path2 = randomStatePath();
 
     // Set state at multiple paths
-    await space.setPlaintextState(path1, 'value at path1', null);
-    await space.setPlaintextState(path2, 'value at path2');
-    await space.setPlaintextState(path1, 'updated path1');
+    await space.setPlaintextState(path1, stringToBytes('value at path1'), null);
+    await space.setPlaintextState(path2, stringToBytes('value at path2'));
+    await space.setPlaintextState(path1, stringToBytes('updated path1'));
 
     // Get state history
     const { messages, has_more } = await space.getStateHistory();
@@ -168,10 +163,10 @@ describe('E2ET: State', () => {
     const stateData = JSON.stringify({ theme: 'dark', language: 'en' });
 
     // Set state
-    await space.setPlaintextState(path, stateData, null);
+    await space.setPlaintextState(path, stringToBytes(stateData), null);
 
-    // Get state (returns base64, need to decode)
-    const retrieved = decodePlaintext(await space.getPlaintextState(path));
+    // Get state
+    const retrieved = bytesToString(await space.getPlaintextState(path));
 
     expect(retrieved).toBe(stateData);
     expect(JSON.parse(retrieved)).toEqual({ theme: 'dark', language: 'en' });
@@ -190,8 +185,8 @@ describe('E2ET: State', () => {
     });
 
     const path = randomStatePath();
-    // Create some binary-like content
-    const binaryContent = String.fromCharCode(...Array.from({ length: 256 }, (_, i) => i));
+    // Create some binary content (all byte values 0-255)
+    const binaryContent = new Uint8Array(Array.from({ length: 256 }, (_, i) => i));
 
     // Set encrypted state with binary content
     await space.setEncryptedState(path, binaryContent, null);
@@ -199,6 +194,6 @@ describe('E2ET: State', () => {
     // Get and verify
     const retrieved = await space.getEncryptedState(path);
 
-    expect(retrieved).toBe(binaryContent);
+    expect(retrieved).toEqual(binaryContent);
   });
 });

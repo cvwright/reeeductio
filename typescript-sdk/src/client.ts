@@ -15,7 +15,6 @@ import {
   toToolId,
   generateKeyPair,
   stringToBytes,
-  bytesToString,
 } from './crypto.js';
 import { postMessage, getMessages, getMessage } from './messages.js';
 import { getState, setState, getStateHistory } from './state.js';
@@ -128,26 +127,26 @@ export class Space {
    * Get current plaintext state value at path.
    *
    * @param path - State path (e.g., "auth/users/U_abc123")
-   * @returns Base64-encoded state data
+   * @returns State data
    */
-  async getPlaintextState(path: string): Promise<string> {
+  async getPlaintextState(path: string): Promise<Uint8Array> {
     const token = await this.auth.getToken();
     const message = await getState(this.fetchFn, this.baseUrl, token, this.spaceId, path);
-    return message.data;
+    return decodeBase64(message.data);
   }
 
   /**
    * Get encrypted state value at path and decrypt it.
    *
    * @param path - State path
-   * @returns Decrypted plaintext string
+   * @returns Decrypted plaintext data
    */
-  async getEncryptedState(path: string): Promise<string> {
+  async getEncryptedState(path: string): Promise<Uint8Array> {
     const token = await this.auth.getToken();
     const message = await getState(this.fetchFn, this.baseUrl, token, this.spaceId, path);
 
     if (!message.data || message.data.length === 0) {
-      return '';
+      return new Uint8Array([]);
     }
 
     // Base64 decode to get encrypted bytes
@@ -156,42 +155,40 @@ export class Space {
     // Decrypt using state key
     const plaintextBytes = decryptAesGcm(encryptedBytes, this.stateKey);
 
-    return bytesToString(plaintextBytes);
+    return plaintextBytes;
   }
 
   /**
    * Set plaintext state value at path.
    *
    * @param path - State path
-   * @param data - Plaintext string data to store
+   * @param data - Plaintext data to store
    * @param prevHash - Previous message hash (optional, fetched if not provided)
    * @returns MessageCreated with message_hash and server_timestamp
    */
   async setPlaintextState(
     path: string,
-    data: string,
+    data: Uint8Array,
     prevHash?: string | null
   ): Promise<MessageCreated> {
-    const dataBytes = stringToBytes(data);
-    return this._setState(path, dataBytes, prevHash);
+    return this._setState(path, data, prevHash);
   }
 
   /**
    * Set encrypted state value at path.
    *
    * @param path - State path
-   * @param data - Plaintext string data to encrypt and store
+   * @param data - Plaintext data to encrypt and store
    * @param prevHash - Previous message hash (optional, fetched if not provided)
    * @returns MessageCreated with message_hash and server_timestamp
    */
   async setEncryptedState(
     path: string,
-    data: string,
+    data: Uint8Array,
     prevHash?: string | null
   ): Promise<MessageCreated> {
     // Encrypt using state key
-    const plaintextBytes = stringToBytes(data);
-    const encryptedBytes = encryptAesGcm(plaintextBytes, this.stateKey);
+    const encryptedBytes = encryptAesGcm(data, this.stateKey);
 
     // Pass encrypted bytes directly - postMessage handles base64 encoding
     return this._setState(path, encryptedBytes, prevHash);
@@ -537,7 +534,8 @@ export class Space {
     }
 
     // Store the tool definition at auth/tools/{tool_id}
-    const toolData = JSON.stringify(tool);
+    const toolString = JSON.stringify(tool);
+    const toolData = stringToBytes(toolString);
     await this.setPlaintextState(`auth/tools/${toolId}`, toolData, options?.prevHash);
 
     // Grant capabilities to the tool
@@ -583,7 +581,8 @@ export class Space {
     capability: Capability,
     prevHash?: string | null
   ): Promise<MessageCreated> {
-    const capData = JSON.stringify(capability);
+    const capString = JSON.stringify(capability);
+    const capData = stringToBytes(capString);
     return this.setPlaintextState(
       `auth/tools/${toolId}/rights/${capabilityId}`,
       capData,
@@ -631,7 +630,8 @@ export class Space {
     capability: Capability,
     prevHash?: string | null
   ): Promise<MessageCreated> {
-    const capData = JSON.stringify(capability);
+    const capString = JSON.stringify(capability);
+    const capData = stringToBytes(capString);
     return this.setPlaintextState(
       `auth/users/${userId}/rights/${capabilityId}`,
       capData,

@@ -102,7 +102,7 @@ describe('E2E: Blob Storage', () => {
     expect(result.blob_id[0]).toBe('B');
 
     // Download and decrypt
-    const downloaded = await space.downloadAndDecryptBlob(result.blob_id);
+    const downloaded = await space.downloadAndDecryptBlob(result.blob_id, result.key);
 
     expect(bytesToString(downloaded)).toBe(content);
   });
