@@ -31,6 +31,19 @@ servers:
 tags:
   - name: Authentication
     description: Challenge-response authentication using Ed25519 signatures
+  - name: OPAQUE
+    description: |
+      Password-based key recovery using OPAQUE (Oblivious Pseudo-Random Function + Authenticated Key Exchange).
+
+      OPAQUE enables password-based login without exposing passwords or derived keys to the server.
+      It is used for **key recovery only** — after OPAQUE completes, the client holds its Ed25519
+      private key and must still authenticate via the standard challenge-response flow.
+
+      Key design points:
+      - Ed25519 keypairs are randomly generated, not derived from passwords
+      - Password changes re-wrap the same keypair; public keys never change
+      - Credentials are wrapped using OPAQUE's `export_key` with HKDF + AES-GCM
+      - OPAQUE is an optional per-space feature; spaces can remain keypair-only
   - name: Messages
     description: Blockchain-style message streams (topics)
   - name: Blobs
@@ -157,6 +170,377 @@ paths:
                     format: int64
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /spaces/{space_id}/opaque/register/init:
+    post:
+      tags: [OPAQUE]
+      summary: Start OPAQUE registration
+      description: |
+        Begin the OPAQUE registration flow. The client sends a blinded password element
+        (RegistrationRequest) and receives a server-evaluated response (RegistrationResponse).
+
+        This is step 1 of 2 in OPAQUE registration. After receiving the response, the client
+        computes its registration record and submits it via `/opaque/register/finish`.
+
+        **Protocol**: OPAQUE-3DH with ristretto255 and SHA-512
+      parameters:
+        - $ref: '#/components/parameters/SpaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, registration_request]
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  pattern: '^[a-zA-Z0-9._@+-]+$'
+                  description: |
+                    Username for OPAQUE registration. Must be unique within the space.
+                    This is separate from the Ed25519 public key identity.
+                  example: "alice"
+                registration_request:
+                  type: string
+                  format: base64
+                  description: |
+                    OPAQUE RegistrationRequest message (base64-encoded).
+                    Contains the blinded password element for OPRF evaluation.
+      responses:
+        '200':
+          description: Registration request accepted, server response returned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [registration_response]
+                properties:
+                  registration_response:
+                    type: string
+                    format: base64
+                    description: |
+                      OPAQUE RegistrationResponse message (base64-encoded).
+                      Contains the server's OPRF evaluation and public key.
+        '400':
+          description: Invalid request format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Username already registered in this space
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '501':
+          description: OPAQUE is not enabled for this space
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /spaces/{space_id}/opaque/register/finish:
+    post:
+      tags: [OPAQUE]
+      summary: Complete OPAQUE registration
+      description: |
+        Complete the OPAQUE registration flow. The client submits its registration record
+        (containing the OPAQUE envelope) along with the wrapped credentials blob.
+
+        This is step 2 of 2 in OPAQUE registration. The server stores:
+        - The OPAQUE registration record (for future logins)
+        - The encrypted credentials blob (returned after successful login)
+        - The Ed25519 public key (for RBAC integration)
+
+        **Credential wrapping**: The client derives a wrapping key from OPAQUE's `export_key`:
+        ```
+        wrap_key = HKDF-SHA256(export_key, info="reeeductio-credential-wrap")
+        encrypted_creds = AES-256-GCM(wrap_key, nonce, privateKey || symmetricRoot)
+        ```
+      parameters:
+        - $ref: '#/components/parameters/SpaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, registration_record, encrypted_credentials, public_key]
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  pattern: '^[a-zA-Z0-9._@+-]+$'
+                  description: Username (must match the one used in register/init)
+                  example: "alice"
+                registration_record:
+                  type: string
+                  format: base64
+                  description: |
+                    OPAQUE RegistrationRecord message (base64-encoded).
+                    Contains the client's envelope and OPAQUE AKE public key.
+                encrypted_credentials:
+                  type: string
+                  format: base64
+                  maxLength: 1024
+                  description: |
+                    AES-256-GCM encrypted blob containing the user's credentials
+                    (Ed25519 private key + symmetric root). Wrapped with a key derived
+                    from OPAQUE's `export_key`. Format:
+                    - 12-byte nonce
+                    - 32-byte encrypted private key
+                    - 32-byte encrypted symmetric root
+                    - 16-byte GCM auth tag
+                    Total: 92 bytes before base64 encoding (~124 chars).
+                public_key:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{44}$'
+                  minLength: 44
+                  maxLength: 44
+                  description: |
+                    Ed25519 public key (typed, 44-char URL-safe base64).
+                    This is the user's reeeductio identity, registered in the space's RBAC.
+                    NOT the OPAQUE AKE public key (which is internal to OPAQUE).
+      responses:
+        '201':
+          description: Registration completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    description: The registered username
+                  public_key:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                    description: The registered Ed25519 public key
+        '400':
+          description: Invalid registration record or mismatched username
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No pending registration found for this username (init not called or expired)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Username already fully registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '501':
+          description: OPAQUE is not enabled for this space
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /spaces/{space_id}/opaque/login/init:
+    post:
+      tags: [OPAQUE]
+      summary: Start OPAQUE login
+      description: |
+        Begin the OPAQUE login flow. The client sends a credential request containing
+        a blinded password element. The server responds with:
+        - The OPRF evaluation
+        - The user's OPAQUE envelope (encrypted with export_key)
+        - Key exchange message (KE2)
+
+        This is step 1 of 2 in OPAQUE login. After processing the response, the client
+        can derive its credentials and must complete authentication via `/opaque/login/finish`.
+
+        **Rate limiting**: This endpoint is rate-limited to prevent brute-force attacks.
+        Excessive failed attempts may result in temporary account lockout.
+
+        **Protocol**: OPAQUE-3DH with ristretto255 and SHA-512
+      parameters:
+        - $ref: '#/components/parameters/SpaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, credential_request]
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  pattern: '^[a-zA-Z0-9._@+-]+$'
+                  description: Username for OPAQUE login
+                  example: "alice"
+                credential_request:
+                  type: string
+                  format: base64
+                  description: |
+                    OPAQUE CredentialRequest message (base64-encoded).
+                    Contains the blinded password element and client key exchange data (KE1).
+      responses:
+        '200':
+          description: Credential request accepted, server response returned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credential_response]
+                properties:
+                  credential_response:
+                    type: string
+                    format: base64
+                    description: |
+                      OPAQUE CredentialResponse message (base64-encoded).
+                      Contains the server's OPRF evaluation, envelope, and key exchange data (KE2).
+        '400':
+          description: Invalid request format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid username (user not found or OPAQUE not configured)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many login attempts, try again later
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Error'
+                  - type: object
+                    properties:
+                      retry_after:
+                        type: integer
+                        description: Seconds until next attempt is allowed
+        '501':
+          description: OPAQUE is not enabled for this space
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /spaces/{space_id}/opaque/login/finish:
+    post:
+      tags: [OPAQUE]
+      summary: Complete OPAQUE login
+      description: |
+        Complete the OPAQUE login flow. The client submits its key exchange finalization (KE3).
+        The server validates the OPAQUE protocol completion and returns the encrypted
+        credentials blob that was stored during registration.
+
+        This is step 2 of 2 in OPAQUE login. After receiving the encrypted credentials,
+        the client:
+        1. Derives `wrap_key` from OPAQUE's `export_key`
+        2. Decrypts the credentials blob to obtain `privateKey` and `symmetricRoot`
+        3. Proceeds to standard Ed25519 challenge-response authentication
+
+        **Important**: This endpoint does NOT return a session token. The client must
+        still authenticate via `/auth/challenge` and `/auth/verify` using the recovered
+        Ed25519 keypair.
+      parameters:
+        - $ref: '#/components/parameters/SpaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, credential_finalization]
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  pattern: '^[a-zA-Z0-9._@+-]+$'
+                  description: Username (must match the one used in login/init)
+                  example: "alice"
+                credential_finalization:
+                  type: string
+                  format: base64
+                  description: |
+                    OPAQUE CredentialFinalization message (base64-encoded).
+                    Contains the client's key exchange finalization (KE3) proving
+                    knowledge of the password without revealing it.
+      responses:
+        '200':
+          description: OPAQUE login successful, encrypted credentials returned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [encrypted_credentials, public_key]
+                properties:
+                  encrypted_credentials:
+                    type: string
+                    format: base64
+                    description: |
+                      AES-256-GCM encrypted blob containing the user's credentials.
+                      Decrypt with key derived from OPAQUE's `export_key`:
+                      ```
+                      wrap_key = HKDF-SHA256(export_key, info="reeeductio-credential-wrap")
+                      plaintext = AES-256-GCM-Decrypt(wrap_key, encrypted_credentials)
+                      privateKey = plaintext[0:32]
+                      symmetricRoot = plaintext[32:64]
+                      ```
+                  public_key:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{44}$'
+                    minLength: 44
+                    maxLength: 44
+                    description: |
+                      The user's Ed25519 public key. Use this with the recovered
+                      private key for challenge-response authentication.
+        '400':
+          description: Invalid credential finalization message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: OPAQUE authentication failed (wrong password or protocol error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No pending login found for this username (init not called or expired)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many failed login attempts, account temporarily locked
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Error'
+                  - type: object
+                    properties:
+                      retry_after:
+                        type: integer
+                        description: Seconds until next attempt is allowed
+        '501':
+          description: OPAQUE is not enabled for this space
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /spaces/{space_id}/data/{path}:
     get:
@@ -1182,6 +1566,76 @@ components:
         Use the Message schema instead. This schema is kept for backward compatibility.
       allOf:
         - $ref: '#/components/schemas/DataEntry'
+
+    OpaqueCredentials:
+      type: object
+      description: |
+        Encrypted credentials blob stored alongside OPAQUE records.
+        Contains the user's Ed25519 private key and space symmetric root,
+        encrypted with a key derived from OPAQUE's export_key.
+      required: [encrypted_credentials, public_key]
+      properties:
+        encrypted_credentials:
+          type: string
+          format: base64
+          description: |
+            AES-256-GCM encrypted credentials. Structure:
+            - Bytes 0-11: GCM nonce (12 bytes)
+            - Bytes 12-43: Encrypted Ed25519 private key (32 bytes)
+            - Bytes 44-75: Encrypted symmetric root (32 bytes)
+            - Bytes 76-91: GCM authentication tag (16 bytes)
+
+            Wrapping key derivation:
+            ```
+            wrap_key = HKDF-SHA256(
+              ikm=export_key,
+              salt=empty,
+              info="reeeductio-credential-wrap",
+              length=32
+            )
+            ```
+        public_key:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: Ed25519 public key (for verification and RBAC lookup)
+
+    OpaqueUser:
+      type: object
+      description: |
+        OPAQUE user record stored on the server. This is an internal schema
+        representing what the server stores, not directly exposed via API.
+      properties:
+        username:
+          type: string
+          pattern: '^[a-zA-Z0-9._@+-]+$'
+          description: Unique username within the space
+        registration_record:
+          type: string
+          format: base64
+          description: OPAQUE server-side registration record
+        encrypted_credentials:
+          type: string
+          format: base64
+          description: Wrapped credentials (returned after successful login)
+        public_key:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{44}$'
+          minLength: 44
+          maxLength: 44
+          description: User's Ed25519 public key
+        created_at:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when user was registered
+        failed_attempts:
+          type: integer
+          description: Count of recent failed login attempts (for rate limiting)
+        locked_until:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when lockout expires (if locked)
 
     Error:
       type: object
