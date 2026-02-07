@@ -72,6 +72,7 @@ export type {
   OpaqueUserRecord,
   OpaqueCredentials,
   OpaqueRegistrationResult,
+  EnableOpaqueResult,
 } from './types.js';
 
 export { IdType } from './types.js';
@@ -167,6 +168,10 @@ export {
   performOpaqueRegistration,
   performOpaqueLogin,
   loginWithOpaque,
+  // OPAQUE setup constants
+  OPAQUE_SERVER_SETUP_PATH,
+  OPAQUE_USER_ROLE_ID,
+  OPAQUE_USER_CAP_ID,
 } from './opaque.js';
 
 // High-level clients

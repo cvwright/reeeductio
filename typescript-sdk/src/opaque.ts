@@ -41,6 +41,47 @@ import type {
 const CREDENTIAL_WRAP_INFO = 'reeeductio-credential-wrap';
 
 // ============================================================
+// Base64 Format Conversion Helpers
+// ============================================================
+
+/**
+ * Convert URL-safe base64 (without padding) to standard base64 (with padding).
+ * The @serenity-kit/opaque library uses URL-safe base64 without padding,
+ * but the Python opaque_snake library expects standard base64 with padding.
+ */
+function urlSafeToStandardBase64(urlSafe: string): string {
+  // Replace URL-safe characters with standard base64 characters
+  let standard = urlSafe.replace(/-/g, '+').replace(/_/g, '/');
+  // Add padding if needed
+  const padding = 4 - (standard.length % 4);
+  if (padding !== 4) {
+    standard += '='.repeat(padding);
+  }
+  return standard;
+}
+
+/**
+ * Convert standard base64 (with padding) to URL-safe base64 (without padding).
+ */
+function standardToUrlSafeBase64(standard: string): string {
+  // Remove padding and replace standard characters with URL-safe ones
+  return standard.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+// ============================================================
+// OPAQUE Setup Constants
+// ============================================================
+
+/** Data path for OPAQUE server setup */
+export const OPAQUE_SERVER_SETUP_PATH = 'opaque/server/setup';
+
+/** Role ID for users who can register OPAQUE credentials */
+export const OPAQUE_USER_ROLE_ID = 'opaque-user';
+
+/** Capability ID for creating OPAQUE user records */
+export const OPAQUE_USER_CAP_ID = 'cap_create_opaque_user';
+
+// ============================================================
 // Credential Wrapping/Unwrapping
 // ============================================================
 
@@ -104,6 +145,49 @@ export function unwrapCredentials(
 // ============================================================
 // Low-level API Functions
 // ============================================================
+
+/**
+ * Create OPAQUE server setup on the backend.
+ *
+ * This endpoint generates a new OPAQUE server setup using the opaque_snake
+ * library on the backend. The client receives the base64-encoded setup bytes
+ * and is responsible for signing and storing them via the /data API.
+ *
+ * @param fetchFn - Fetch implementation
+ * @param baseUrl - API base URL
+ * @param token - JWT bearer token (admin required)
+ * @param spaceId - Space identifier
+ * @returns OPAQUE server setup (base64-encoded)
+ */
+export async function createOpaqueSetup(
+  fetchFn: typeof fetch,
+  baseUrl: string,
+  token: string,
+  spaceId: string
+): Promise<string> {
+  const url = `${baseUrl}/spaces/${spaceId}/opaque/setup`;
+
+  const response = await fetchFn(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    let error: ApiError | undefined;
+    try {
+      error = (await response.json()) as ApiError;
+    } catch {
+      // Ignore JSON parse errors
+    }
+    throw createApiError(response.status, error);
+  }
+
+  const result = await response.json() as { server_setup: string };
+  return result.server_setup;
+}
 
 /**
  * Start OPAQUE registration (step 1 of 2).
@@ -335,34 +419,38 @@ export async function performOpaqueRegistration(options: {
   const clientRegistration = opaque.client.startRegistration({ password });
 
   // Step 2: Send registration request to server
+  // Convert from URL-safe base64 (client) to standard base64 (server)
   const initResponse = await opaqueRegisterInit(
     fetchFn,
     baseUrl,
     token,
     spaceId,
     username,
-    clientRegistration.registrationRequest
+    urlSafeToStandardBase64(clientRegistration.registrationRequest)
   );
 
   // Step 3: Finish registration on client side
+  // Convert server response from standard base64 to URL-safe for client library
   const registrationResult = opaque.client.finishRegistration({
     password,
-    registrationResponse: initResponse.registration_response,
+    registrationResponse: standardToUrlSafeBase64(initResponse.registration_response),
     clientRegistrationState: clientRegistration.clientRegistrationState,
   });
 
   // Step 4: Send registration record to server
+  // Convert from URL-safe base64 (client) to standard base64 (server)
   const finishResponse = await opaqueRegisterFinish(
     fetchFn,
     baseUrl,
     token,
     spaceId,
     username,
-    registrationResult.registrationRecord
+    urlSafeToStandardBase64(registrationResult.registrationRecord)
   );
 
   // Step 5: Wrap credentials with export key
-  const exportKey = decodeBase64(registrationResult.exportKey);
+  // The export key from the client library is URL-safe base64
+  const exportKey = decodeBase64(urlSafeToStandardBase64(registrationResult.exportKey));
   const encryptedCredentials = wrapCredentials(
     exportKey,
     keyPair.privateKey,
@@ -431,20 +519,20 @@ export async function performOpaqueLogin(options: {
   const clientLogin = opaque.client.startLogin({ password });
 
   // Step 2: Send credential request to server
-  // Note: The library uses 'startLoginRequest' but the API expects 'credential_request'
+  // Convert from URL-safe base64 (client) to standard base64 (server)
   const initResponse = await opaqueLoginInit(
     fetchFn,
     baseUrl,
     spaceId,
     username,
-    clientLogin.startLoginRequest
+    urlSafeToStandardBase64(clientLogin.startLoginRequest)
   );
 
   // Step 3: Finish login on client side
-  // Note: The library uses 'loginResponse' but the API returns 'credential_response'
+  // Convert server response from standard base64 to URL-safe for client library
   const loginResult = opaque.client.finishLogin({
     password,
-    loginResponse: initResponse.credential_response,
+    loginResponse: standardToUrlSafeBase64(initResponse.credential_response),
     clientLoginState: clientLogin.clientLoginState,
   });
 
@@ -453,17 +541,18 @@ export async function performOpaqueLogin(options: {
   }
 
   // Step 4: Send credential finalization to server
-  // Note: The library uses 'finishLoginRequest' but the API expects 'credential_finalization'
+  // Convert from URL-safe base64 (client) to standard base64 (server)
   const finishResponse = await opaqueLoginFinish(
     fetchFn,
     baseUrl,
     spaceId,
     username,
-    loginResult.finishLoginRequest
+    urlSafeToStandardBase64(loginResult.finishLoginRequest)
   );
 
   // Step 5: Unwrap credentials with export key
-  const exportKey = decodeBase64(loginResult.exportKey);
+  // The export key from the client library is URL-safe base64
+  const exportKey = decodeBase64(urlSafeToStandardBase64(loginResult.exportKey));
   const encryptedCredentials = decodeBase64(finishResponse.encrypted_credentials);
 
   const { privateKey, symmetricRoot } = unwrapCredentials(exportKey, encryptedCredentials);

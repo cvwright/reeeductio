@@ -660,9 +660,8 @@ class Space:
     def grant_capability_to_role(
         self,
         role_name: str,
-        op: str,
-        path: str,
-        cap_id: str | None = None,
+        cap_id: str,
+        capability: dict,
     ) -> MessageCreated:
         """
         Grant a capability to a role.
@@ -671,9 +670,8 @@ class Space:
 
         Args:
             role_name: Name of the role to grant the capability to
-            op: Operation to grant (read, create, modify, delete, write)
-            path: Resource path pattern the capability applies to
-            cap_id: Optional capability ID (auto-generated if not provided)
+            cap_id: Capability ID
+            capability: Capability dict with 'op' and 'path' keys
 
         Returns:
             MessageCreated with message_hash and server_timestamp
@@ -681,25 +679,42 @@ class Space:
         Raises:
             ValidationError: If capability creation fails
         """
-        if cap_id is None:
-            cap_id = f"cap_{uuid.uuid4().hex[:8]}"
+        return self.set_plaintext_state(
+            f"auth/roles/{role_name}/rights/{cap_id}",
+            json.dumps(capability),
+        )
 
-        cap_data = {
-            "op": op,
-            "path": path,
+    def assign_role_to_user(self, user_id: str, role_name: str) -> MessageCreated:
+        """
+        Assign a role to a user.
+
+        Role assignments are stored at auth/users/{user_id}/roles/{role_name}.
+
+        Args:
+            user_id: Typed user identifier (U_...)
+            role_name: Name of the role to assign
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If role assignment fails
+        """
+        assignment_data = {
+            "user_id": user_id,
+            "role_id": role_name,
         }
 
         return self.set_plaintext_state(
-            f"auth/roles/{role_name}/rights/{cap_id}",
-            json.dumps(cap_data),
+            f"auth/users/{user_id}/roles/{role_name}",
+            json.dumps(assignment_data),
         )
 
     def grant_capability_to_user(
         self,
         user_id: str,
-        op: str,
-        path: str,
-        cap_id: str | None = None,
+        cap_id: str,
+        capability: dict,
     ) -> MessageCreated:
         """
         Grant a capability to a user.
@@ -708,9 +723,8 @@ class Space:
 
         Args:
             user_id: Typed user identifier (U_...)
-            op: Operation to grant (read, create, modify, delete, write)
-            path: Resource path pattern the capability applies to
-            cap_id: Optional capability ID (auto-generated if not provided)
+            cap_id: Capability ID
+            capability: Capability dict with 'op' and 'path' keys
 
         Returns:
             MessageCreated with message_hash and server_timestamp
@@ -718,17 +732,9 @@ class Space:
         Raises:
             ValidationError: If capability creation fails
         """
-        if cap_id is None:
-            cap_id = f"cap_{uuid.uuid4().hex[:8]}"
-
-        cap_data = {
-            "op": op,
-            "path": path,
-        }
-
         return self.set_plaintext_state(
             f"auth/users/{user_id}/rights/{cap_id}",
-            json.dumps(cap_data),
+            json.dumps(capability),
         )
 
     # ============================================================
@@ -880,9 +886,8 @@ class Space:
         except NotFoundError:
             self.grant_capability_to_role(
                 OPAQUE_USER_ROLE_ID,
-                op="create",
-                path="data/opaque/users/*",
-                cap_id=OPAQUE_USER_CAP_ID,
+                OPAQUE_USER_CAP_ID,
+                {"op": "create", "path": "data/opaque/users/{any}"},
             )
             result["capability_created"] = True
 
@@ -1948,9 +1953,8 @@ class AsyncSpace:
     async def grant_capability_to_role(
         self,
         role_name: str,
-        op: str,
-        path: str,
-        cap_id: str | None = None,
+        cap_id: str,
+        capability: dict,
     ) -> MessageCreated:
         """
         Grant a capability to a role.
@@ -1959,9 +1963,8 @@ class AsyncSpace:
 
         Args:
             role_name: Name of the role to grant the capability to
-            op: Operation to grant (read, create, modify, delete, write)
-            path: Resource path pattern the capability applies to
-            cap_id: Optional capability ID (auto-generated if not provided)
+            cap_id: Capability ID
+            capability: Capability dict with 'op' and 'path' keys
 
         Returns:
             MessageCreated with message_hash and server_timestamp
@@ -1969,25 +1972,42 @@ class AsyncSpace:
         Raises:
             ValidationError: If capability creation fails
         """
-        if cap_id is None:
-            cap_id = f"cap_{uuid.uuid4().hex[:8]}"
+        return await self.set_plaintext_state(
+            f"auth/roles/{role_name}/rights/{cap_id}",
+            json.dumps(capability),
+        )
 
-        cap_data = {
-            "op": op,
-            "path": path,
+    async def assign_role_to_user(self, user_id: str, role_name: str) -> MessageCreated:
+        """
+        Assign a role to a user.
+
+        Role assignments are stored at auth/users/{user_id}/roles/{role_name}.
+
+        Args:
+            user_id: Typed user identifier (U_...)
+            role_name: Name of the role to assign
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If role assignment fails
+        """
+        assignment_data = {
+            "user_id": user_id,
+            "role_id": role_name,
         }
 
         return await self.set_plaintext_state(
-            f"auth/roles/{role_name}/rights/{cap_id}",
-            json.dumps(cap_data),
+            f"auth/users/{user_id}/roles/{role_name}",
+            json.dumps(assignment_data),
         )
 
     async def grant_capability_to_user(
         self,
         user_id: str,
-        op: str,
-        path: str,
-        cap_id: str | None = None,
+        cap_id: str,
+        capability: dict,
     ) -> MessageCreated:
         """
         Grant a capability to a user.
@@ -1996,9 +2016,8 @@ class AsyncSpace:
 
         Args:
             user_id: Typed user identifier (U_...)
-            op: Operation to grant (read, create, modify, delete, write)
-            path: Resource path pattern the capability applies to
-            cap_id: Optional capability ID (auto-generated if not provided)
+            cap_id: Capability ID
+            capability: Capability dict with 'op' and 'path' keys
 
         Returns:
             MessageCreated with message_hash and server_timestamp
@@ -2006,17 +2025,9 @@ class AsyncSpace:
         Raises:
             ValidationError: If capability creation fails
         """
-        if cap_id is None:
-            cap_id = f"cap_{uuid.uuid4().hex[:8]}"
-
-        cap_data = {
-            "op": op,
-            "path": path,
-        }
-
         return await self.set_plaintext_state(
             f"auth/users/{user_id}/rights/{cap_id}",
-            json.dumps(cap_data),
+            json.dumps(capability),
         )
 
     # ============================================================
@@ -2166,9 +2177,8 @@ class AsyncSpace:
         except NotFoundError:
             await self.grant_capability_to_role(
                 OPAQUE_USER_ROLE_ID,
-                op="create",
-                path="data/opaque/users/*",
-                cap_id=OPAQUE_USER_CAP_ID,
+                OPAQUE_USER_CAP_ID,
+                {"op": "create", "path": "data/opaque/users/{any}"},
             )
             result["capability_created"] = True
 

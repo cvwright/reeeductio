@@ -80,3 +80,10 @@ export function randomDataPath(): string {
 export function randomStatePath(): string {
   return `test/state/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+/**
+ * Generate a random username for OPAQUE testing.
+ */
+export function randomUsername(): string {
+  return `test-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}

@@ -27,24 +27,20 @@ from exceptions import ChainConflictError
 import secrets
 import jwt
 
-# Optional OPAQUE support
-try:
-    from opaque_snake import (
-        OpaqueServer,
-        OpaqueClient,
-        RegistrationRequest,
-        RegistrationResponse,
-        RegistrationUpload,
-        CredentialRequest,
-        CredentialResponse,
-        CredentialFinalization,
-        PasswordFile,
-        AuthenticationError,
-        SerializationError,
-    )
-    OPAQUE_AVAILABLE = True
-except ImportError:
-    OPAQUE_AVAILABLE = False
+# OPAQUE support
+from opaque_snake import (
+    OpaqueServer,
+    OpaqueClient,
+    RegistrationRequest,
+    RegistrationResponse,
+    RegistrationUpload,
+    CredentialRequest,
+    CredentialResponse,
+    CredentialFinalization,
+    PasswordFile,
+    AuthenticationError,
+    SerializationError,
+)
 
 
 class Space:
@@ -905,12 +901,15 @@ class Space:
         Check if user is a space admin (currently just the space owner).
 
         Args:
-            user_id: The user's public key
+            user_id: The user's public key identifier (U_...)
 
         Returns:
-            True if user is the space owner (space_id matches user_id)
+            True if user is the space owner (public keys match)
         """
-        return user_id == self.space_id
+        # Compare raw public key bytes (user_id has U_ prefix, space_id has C_ prefix)
+        user_pubkey = extract_public_key(user_id)
+        space_pubkey = extract_public_key(self.space_id)
+        return user_pubkey == space_pubkey
 
     def _check_tool_limit(self, member_id: str) -> bool:
         """
@@ -1231,9 +1230,6 @@ class Space:
         Raises:
             ValueError: If OPAQUE is not available or not enabled for this space
         """
-        if not OPAQUE_AVAILABLE:
-            raise ValueError("OPAQUE is not available (opaque_snake not installed)")
-
         if self._opaque_server is not None:
             return self._opaque_server
 
@@ -1248,6 +1244,38 @@ class Space:
             return self._opaque_server
         except Exception as e:
             raise ValueError(f"Invalid OPAQUE server setup: {e}")
+
+    def create_opaque_setup(self, token: str) -> Dict[str, str]:
+        """
+        Create OPAQUE server setup for this space.
+
+        This generates a new OPAQUE server setup and returns it to the client.
+        The client is responsible for signing and storing it via the data API.
+        Only space admins can call this method.
+
+        Args:
+            token: JWT authentication token
+
+        Returns:
+            Dictionary with 'server_setup' (base64-encoded setup bytes)
+
+        Raises:
+            ValueError: If auth fails or user is not admin
+        """
+        # Authenticate and check admin status
+        user = self.authenticate_request(token)
+        user_id = user["id"]
+
+        # Check if user is admin (space owner)
+        if not self.is_space_admin(user_id):
+            raise ValueError("Only space admins can create OPAQUE setup")
+
+        # Generate new OPAQUE server setup
+        server = OpaqueServer()
+        setup_bytes = server.export_setup()
+        setup_b64 = base64.b64encode(setup_bytes).decode('ascii')
+
+        return {"server_setup": setup_b64}
 
     def _cleanup_expired_opaque_state(self) -> None:
         """Remove expired OPAQUE registration and login state."""

@@ -486,3 +486,15 @@ export interface OpaqueRegistrationResult {
   /** User's Ed25519 public key (44-char URL-safe base64) */
   publicKey: string;
 }
+
+/**
+ * Result from enabling OPAQUE for a space.
+ */
+export interface EnableOpaqueResult {
+  /** True if new server setup was uploaded */
+  serverSetupCreated: boolean;
+  /** True if opaque-user role was created */
+  roleCreated: boolean;
+  /** True if CREATE capability was added */
+  capabilityCreated: boolean;
+}

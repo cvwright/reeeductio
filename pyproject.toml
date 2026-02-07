@@ -14,6 +14,7 @@ dependencies = [
     "boto3>=1.34.0",
     "pyyaml>=6.0.0",
     "google-cloud-firestore>=2.14.0",  # For Firestore backend support
+    "opaque_snake",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +39,9 @@ only-include = [
     "authorization.py",
     "example_client.py",
 ]
+
+[tool.uv.sources]
+opaque_snake = { path = "../opaque-snake" }
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

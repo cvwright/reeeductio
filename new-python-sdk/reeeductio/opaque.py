@@ -39,6 +39,8 @@ try:
         CredentialRequest,
         CredentialResponse,
         CredentialFinalization,
+        ClientRegistrationState,
+        ClientLoginState,
     )
     OPAQUE_AVAILABLE = True
 except ImportError:
@@ -180,7 +182,7 @@ def opaque_login(
     with httpx.Client(base_url=base_url) as client:
         # Step 1: Create client-side OPAQUE state and credential request
         opaque_client = OpaqueClient()
-        credential_request, client_login_state = opaque_client.create_credential_request(password)
+        credential_request, client_login_state = opaque_client.start_login(password)
 
         # Step 2: Send credential request to server
         try:
@@ -210,9 +212,11 @@ def opaque_login(
             raise OpaqueError(f"Invalid credential response: {e}") from e
 
         try:
-            credential_finalization, export_key = opaque_client.finish_login(
-                credential_response, client_login_state
+            login_result = opaque_client.finish_login(
+                credential_response, client_login_state, password
             )
+            credential_finalization = login_result.finalization
+            export_key = login_result.session_keys.export_key
         except Exception as e:
             raise AuthenticationError(f"OPAQUE authentication failed: {e}") from e
 
@@ -272,7 +276,7 @@ async def opaque_login_async(
     async with httpx.AsyncClient(base_url=base_url) as client:
         # Step 1: Create client-side OPAQUE state and credential request
         opaque_client = OpaqueClient()
-        credential_request, client_login_state = opaque_client.create_credential_request(password)
+        credential_request, client_login_state = opaque_client.start_login(password)
 
         # Step 2: Send credential request to server
         try:
@@ -302,9 +306,11 @@ async def opaque_login_async(
             raise OpaqueError(f"Invalid credential response: {e}") from e
 
         try:
-            credential_finalization, export_key = opaque_client.finish_login(
-                credential_response, client_login_state
+            login_result = opaque_client.finish_login(
+                credential_response, client_login_state, password
             )
+            credential_finalization = login_result.finalization
+            export_key = login_result.session_keys.export_key
         except Exception as e:
             raise AuthenticationError(f"OPAQUE authentication failed: {e}") from e
 
@@ -413,7 +419,7 @@ def opaque_register(
 
     # Step 1: Create client-side registration request
     opaque_client = OpaqueClient()
-    registration_request = opaque_client.create_registration_request(password)
+    registration_request, client_reg_state = opaque_client.start_registration(password)
 
     # Step 2: Send registration request to server
     try:
@@ -444,9 +450,11 @@ def opaque_register(
 
     # Step 4: Finish client-side registration to get export_key and registration record
     try:
-        registration_record, export_key = opaque_client.finish_registration(
-            registration_response, username
+        reg_result = opaque_client.finish_registration(
+            registration_response, client_reg_state, password
         )
+        registration_record = reg_result.upload
+        export_key = reg_result.export_key
     except Exception as e:
         raise OpaqueError(f"Failed to complete registration: {e}") from e
 
@@ -537,7 +545,7 @@ async def opaque_register_async(
 
     # Step 1: Create client-side registration request
     opaque_client = OpaqueClient()
-    registration_request = opaque_client.create_registration_request(password)
+    registration_request, client_reg_state = opaque_client.start_registration(password)
 
     # Step 2: Send registration request to server
     try:
@@ -568,9 +576,11 @@ async def opaque_register_async(
 
     # Step 4: Finish client-side registration
     try:
-        registration_record, export_key = opaque_client.finish_registration(
-            registration_response, username
+        reg_result = opaque_client.finish_registration(
+            registration_response, client_reg_state, password
         )
+        registration_record = reg_result.upload
+        export_key = reg_result.export_key
     except Exception as e:
         raise OpaqueError(f"Failed to complete registration: {e}") from e
 

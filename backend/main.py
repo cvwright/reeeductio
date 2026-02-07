@@ -277,6 +277,10 @@ class OpaqueLoginFinishResponse(BaseModel):
     public_key: str
 
 
+class OpaqueSetupResponse(BaseModel):
+    server_setup: str = Field(..., description="Base64-encoded OPAQUE server setup bytes")
+
+
 # ============================================================================
 # Authentication Endpoints
 # ============================================================================
@@ -349,6 +353,37 @@ async def auth_refresh(
 # ============================================================================
 # OPAQUE Endpoints (Password-Based Key Recovery)
 # ============================================================================
+
+@app.post("/spaces/{space_id}/opaque/setup", response_model=OpaqueSetupResponse)
+async def create_opaque_setup(
+    space_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Create OPAQUE server setup for this space.
+
+    Generates a new OPAQUE server setup using the opaque_snake library.
+    The client is responsible for signing and storing it via the /data API
+    at the path 'opaque/server/setup'.
+
+    Only space admins can call this endpoint.
+    """
+    logger.debug(f"OPAQUE setup: space={space_id}")
+    space = space_manager.get_space(space_id)
+
+    try:
+        result = space.create_opaque_setup(credentials.credentials)
+        return OpaqueSetupResponse(server_setup=result["server_setup"])
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(f"OPAQUE setup failed: space={space_id}, error={error_msg}")
+        if "admin" in error_msg.lower():
+            raise HTTPException(status_code=403, detail=error_msg)
+        elif "token" in error_msg.lower() or "expired" in error_msg.lower():
+            raise HTTPException(status_code=401, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
+
 
 @app.post("/spaces/{space_id}/opaque/register/init", response_model=OpaqueRegisterInitResponse)
 async def opaque_register_init(

@@ -20,7 +20,14 @@ import { postMessage, getMessages, getMessage } from './messages.js';
 import { getState, setState, getStateHistory } from './state.js';
 import { getData, setData } from './kvdata.js';
 import { uploadBlob, downloadBlob, deleteBlob, encryptAndUploadBlob, downloadAndDecryptBlob } from './blobs.js';
-import { performOpaqueRegistration, loginWithOpaque } from './opaque.js';
+import {
+  performOpaqueRegistration,
+  loginWithOpaque,
+  createOpaqueSetup,
+  OPAQUE_SERVER_SETUP_PATH,
+  OPAQUE_USER_ROLE_ID,
+  OPAQUE_USER_CAP_ID,
+} from './opaque.js';
 import type {
   KeyPair,
   Message,
@@ -34,6 +41,7 @@ import type {
   ToolCreated,
   Capability,
   OpaqueRegistrationResult,
+  EnableOpaqueResult,
 } from './types.js';
 import type { EncryptedBlobCreated } from './blobs.js';
 import { createApiError } from './exceptions.js';
@@ -642,6 +650,166 @@ export class Space {
   }
 
   // ============================================================
+  // Authorization Utilities
+  // ============================================================
+
+  /**
+   * Create a role in the space.
+   *
+   * Roles are stored at auth/roles/{roleName} and can have capabilities
+   * granted to them via grantCapabilityToRole().
+   *
+   * @param roleName - Name of the role to create
+   * @param description - Optional description of the role
+   * @param prevHash - Previous state message hash (optional, fetched if not provided)
+   * @returns MessageCreated with message_hash and server_timestamp
+   *
+   * @example
+   * ```typescript
+   * // Create a moderator role
+   * await space.createRole('moderator', 'Can moderate content');
+   *
+   * // Grant capabilities to the role
+   * await space.grantCapabilityToRole('moderator', 'delete_posts', {
+   *   op: 'delete',
+   *   path: 'state/posts/{...}',
+   * });
+   * ```
+   */
+  async createRole(
+    roleName: string,
+    description?: string,
+    prevHash?: string | null
+  ): Promise<MessageCreated> {
+    const roleData: { role_id: string; description?: string } = {
+      role_id: roleName,
+    };
+    if (description) {
+      roleData.description = description;
+    }
+
+    const roleString = JSON.stringify(roleData);
+    const data = stringToBytes(roleString);
+    return this.setPlaintextState(`auth/roles/${roleName}`, data, prevHash);
+  }
+
+  /**
+   * Create a user entry in the space.
+   *
+   * Users are stored at auth/users/{userId} and can have capabilities
+   * granted to them via grantCapabilityToUser() or roles assigned via
+   * assignRoleToUser().
+   *
+   * @param userId - Typed user identifier (U_...)
+   * @param description - Optional description of the user
+   * @param prevHash - Previous state message hash (optional, fetched if not provided)
+   * @returns MessageCreated with message_hash and server_timestamp
+   *
+   * @example
+   * ```typescript
+   * // Create a user entry
+   * await space.createUser('U_abc123...', 'Alice - project lead');
+   *
+   * // Assign a role to the user
+   * await space.assignRoleToUser('U_abc123...', 'admin');
+   * ```
+   */
+  async createUser(
+    userId: string,
+    description?: string,
+    prevHash?: string | null
+  ): Promise<MessageCreated> {
+    const userData: { user_id: string; description?: string } = {
+      user_id: userId,
+    };
+    if (description) {
+      userData.description = description;
+    }
+
+    const userString = JSON.stringify(userData);
+    const data = stringToBytes(userString);
+    return this.setPlaintextState(`auth/users/${userId}`, data, prevHash);
+  }
+
+  /**
+   * Grant a capability to a role.
+   *
+   * Capabilities are stored at auth/roles/{roleName}/rights/{capabilityId}.
+   * All users with this role will inherit the capability.
+   *
+   * @param roleName - Name of the role to grant the capability to
+   * @param capabilityId - Unique identifier for this capability
+   * @param capability - The capability to grant
+   * @param prevHash - Previous state message hash (optional, fetched if not provided)
+   * @returns MessageCreated with message_hash and server_timestamp
+   *
+   * @example
+   * ```typescript
+   * // Grant read access to all profiles for the 'member' role
+   * await space.grantCapabilityToRole('member', 'read_profiles', {
+   *   op: 'read',
+   *   path: 'state/profiles/{...}',
+   * });
+   *
+   * // Grant write access to a specific path pattern
+   * await space.grantCapabilityToRole('admin', 'manage_users', {
+   *   op: 'write',
+   *   path: 'state/auth/users/{...}',
+   * });
+   * ```
+   */
+  async grantCapabilityToRole(
+    roleName: string,
+    capabilityId: string,
+    capability: Capability,
+    prevHash?: string | null
+  ): Promise<MessageCreated> {
+    const capString = JSON.stringify(capability);
+    const capData = stringToBytes(capString);
+    return this.setPlaintextState(
+      `auth/roles/${roleName}/rights/${capabilityId}`,
+      capData,
+      prevHash
+    );
+  }
+
+  /**
+   * Assign a role to a user.
+   *
+   * Role assignments are stored at auth/users/{userId}/roles/{roleName}.
+   * The user will inherit all capabilities granted to the role.
+   *
+   * @param userId - Typed user identifier (U_...)
+   * @param roleName - Name of the role to assign
+   * @param prevHash - Previous state message hash (optional, fetched if not provided)
+   * @returns MessageCreated with message_hash and server_timestamp
+   *
+   * @example
+   * ```typescript
+   * // Assign the 'admin' role to a user
+   * await space.assignRoleToUser('U_abc123...', 'admin');
+   *
+   * // Assign multiple roles
+   * await space.assignRoleToUser('U_abc123...', 'moderator');
+   * await space.assignRoleToUser('U_abc123...', 'member');
+   * ```
+   */
+  async assignRoleToUser(
+    userId: string,
+    roleName: string,
+    prevHash?: string | null
+  ): Promise<MessageCreated> {
+    // Role grants must include both user_id and role_id matching the path
+    const roleAssignment = { user_id: userId, role_id: roleName };
+    const data = stringToBytes(JSON.stringify(roleAssignment));
+    return this.setPlaintextState(
+      `auth/users/${userId}/roles/${roleName}`,
+      data,
+      prevHash
+    );
+  }
+
+  // ============================================================
   // OPAQUE Password-Based Key Recovery
   // ============================================================
 
@@ -744,6 +912,93 @@ export class Space {
     });
 
     return { keyPair, result };
+  }
+
+  /**
+   * Enable OPAQUE for this space.
+   *
+   * Sets up the OPAQUE server configuration and creates the opaque-user role
+   * with the necessary permissions. This must be called by an admin before
+   * users can register OPAQUE credentials.
+   *
+   * This method:
+   * 1. Creates OPAQUE server setup if it doesn't exist (stored in data)
+   * 2. Creates opaque-user role if it doesn't exist (stored in state)
+   * 3. Adds CREATE capability for opaque/users/{any} if missing
+   *
+   * @returns Object indicating what was created
+   *
+   * @example
+   * ```typescript
+   * // As space admin, enable OPAQUE
+   * const result = await space.enableOpaque();
+   * if (result.serverSetupCreated) {
+   *   console.log('OPAQUE server setup created');
+   * }
+   * ```
+   */
+  async enableOpaque(): Promise<EnableOpaqueResult> {
+    const result: EnableOpaqueResult = {
+      serverSetupCreated: false,
+      roleCreated: false,
+      capabilityCreated: false,
+    };
+
+    // Step 1: Check/create OPAQUE server setup (stored in data store)
+    // The server setup is generated by the backend using opaque_snake to ensure
+    // compatibility between TypeScript client and Python server.
+    try {
+      await this.getPlaintextData(OPAQUE_SERVER_SETUP_PATH);
+      // Server setup exists
+    } catch (error) {
+      // Server setup doesn't exist, request one from the backend
+      const token = await this.auth.getToken();
+      const serverSetupB64 = await createOpaqueSetup(
+        this.fetchFn,
+        this.baseUrl,
+        token,
+        this.spaceId
+      );
+      // Store the backend-generated setup bytes
+      await this.setPlaintextData(
+        OPAQUE_SERVER_SETUP_PATH,
+        decodeBase64(serverSetupB64)
+      );
+      result.serverSetupCreated = true;
+    }
+
+    // Step 2: Check/create opaque-user role (stored in state)
+    try {
+      await this.getPlaintextState(`auth/roles/${OPAQUE_USER_ROLE_ID}`);
+      // Role exists
+    } catch (error) {
+      // Role doesn't exist, create it
+      await this.createRole(
+        OPAQUE_USER_ROLE_ID,
+        'Role for users who can register OPAQUE credentials'
+      );
+      result.roleCreated = true;
+    }
+
+    // Step 3: Check/create CREATE capability for opaque/users/{any}
+    const capPath = `auth/roles/${OPAQUE_USER_ROLE_ID}/rights/${OPAQUE_USER_CAP_ID}`;
+    try {
+      await this.getPlaintextState(capPath);
+      // Capability exists
+    } catch (error) {
+      // Capability doesn't exist, create it
+      await this.grantCapabilityToRole(
+        OPAQUE_USER_ROLE_ID,
+        OPAQUE_USER_CAP_ID,
+        {
+          op: 'create',
+          path: 'data/opaque/users/{any}',
+        }
+      );
+      result.capabilityCreated = true;
+    }
+
+    return result;
   }
 
   /**
