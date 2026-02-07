@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -597,6 +598,140 @@ class Space:
         )
 
     # ============================================================
+    # Authorization Utilities
+    # ============================================================
+
+    def create_role(self, role_name: str, description: str | None = None) -> MessageCreated:
+        """
+        Create a role in the space.
+
+        Roles are stored at auth/roles/{role_name} and can have capabilities
+        granted to them via grant_capability_to_role().
+
+        Args:
+            role_name: Name of the role to create
+            description: Optional description of the role
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If role creation fails
+        """
+        role_data = {
+            "role_id": role_name,
+        }
+        if description:
+            role_data["description"] = description
+
+        return self.set_plaintext_state(
+            f"auth/roles/{role_name}",
+            json.dumps(role_data),
+        )
+
+    def create_user(self, user_id: str, description: str | None = None) -> MessageCreated:
+        """
+        Create a user entry in the space.
+
+        Users are stored at auth/users/{user_id} and can have capabilities
+        granted to them via grant_capability_to_user().
+
+        Args:
+            user_id: Typed user identifier (U_...)
+            description: Optional description of the user
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If user creation fails
+        """
+        user_data = {
+            "user_id": user_id,
+        }
+        if description:
+            user_data["description"] = description
+
+        return self.set_plaintext_state(
+            f"auth/users/{user_id}",
+            json.dumps(user_data),
+        )
+
+    def grant_capability_to_role(
+        self,
+        role_name: str,
+        op: str,
+        path: str,
+        cap_id: str | None = None,
+    ) -> MessageCreated:
+        """
+        Grant a capability to a role.
+
+        Capabilities are stored at auth/roles/{role_name}/rights/{cap_id}.
+
+        Args:
+            role_name: Name of the role to grant the capability to
+            op: Operation to grant (read, create, modify, delete, write)
+            path: Resource path pattern the capability applies to
+            cap_id: Optional capability ID (auto-generated if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If capability creation fails
+        """
+        if cap_id is None:
+            cap_id = f"cap_{uuid.uuid4().hex[:8]}"
+
+        cap_data = {
+            "op": op,
+            "path": path,
+        }
+
+        return self.set_plaintext_state(
+            f"auth/roles/{role_name}/rights/{cap_id}",
+            json.dumps(cap_data),
+        )
+
+    def grant_capability_to_user(
+        self,
+        user_id: str,
+        op: str,
+        path: str,
+        cap_id: str | None = None,
+    ) -> MessageCreated:
+        """
+        Grant a capability to a user.
+
+        Capabilities are stored at auth/users/{user_id}/rights/{cap_id}.
+
+        Args:
+            user_id: Typed user identifier (U_...)
+            op: Operation to grant (read, create, modify, delete, write)
+            path: Resource path pattern the capability applies to
+            cap_id: Optional capability ID (auto-generated if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If capability creation fails
+        """
+        if cap_id is None:
+            cap_id = f"cap_{uuid.uuid4().hex[:8]}"
+
+        cap_data = {
+            "op": op,
+            "path": path,
+        }
+
+        return self.set_plaintext_state(
+            f"auth/users/{user_id}/rights/{cap_id}",
+            json.dumps(cap_data),
+        )
+
+    # ============================================================
     # OPAQUE Password-Based Key Recovery
     # ============================================================
 
@@ -697,14 +832,61 @@ class Space:
             if result["server_setup_created"]:
                 print("OPAQUE server setup created")
         """
-        from .opaque import enable_opaque as _enable_opaque
-
-        return _enable_opaque(
-            client=self.client,
-            space_id=self.space_id,
-            user_id=self.keypair.to_user_id(),
-            private_key=self.keypair.private_key,
+        from .opaque import (
+            check_opaque_available,
+            OPAQUE_SERVER_SETUP_PATH,
+            OPAQUE_USER_ROLE_ID,
+            OPAQUE_USER_CAP_ID,
         )
+
+        check_opaque_available()
+
+        # Import OpaqueServer only after checking availability
+        from opaque_snake import OpaqueServer
+
+        result = {
+            "server_setup_created": False,
+            "role_created": False,
+            "capability_created": False,
+        }
+
+        # Step 1: Check/create OPAQUE server setup (stored in data store)
+        try:
+            self.get_plaintext_data(OPAQUE_SERVER_SETUP_PATH)
+            # Server setup exists
+        except NotFoundError:
+            # Create new server setup
+            server = OpaqueServer()
+            setup_bytes = server.export_setup()
+            self.set_plaintext_data(OPAQUE_SERVER_SETUP_PATH, setup_bytes)
+            result["server_setup_created"] = True
+
+        # Step 2: Check/create opaque-user role (stored in state)
+        try:
+            self.get_plaintext_state(f"auth/roles/{OPAQUE_USER_ROLE_ID}")
+            # Role exists
+        except NotFoundError:
+            self.create_role(
+                OPAQUE_USER_ROLE_ID,
+                description="Role for users who can register OPAQUE credentials",
+            )
+            result["role_created"] = True
+
+        # Step 3: Check/create CREATE capability for opaque/users/{any}
+        cap_path = f"auth/roles/{OPAQUE_USER_ROLE_ID}/rights/{OPAQUE_USER_CAP_ID}"
+        try:
+            self.get_plaintext_state(cap_path)
+            # Capability exists
+        except NotFoundError:
+            self.grant_capability_to_role(
+                OPAQUE_USER_ROLE_ID,
+                op="create",
+                path="data/opaque/users/*",
+                cap_id=OPAQUE_USER_CAP_ID,
+            )
+            result["capability_created"] = True
+
+        return result
 
 
 class AdminSpace(Space):
@@ -1704,6 +1886,140 @@ class AsyncSpace:
         )
 
     # ============================================================
+    # Authorization Utilities
+    # ============================================================
+
+    async def create_role(self, role_name: str, description: str | None = None) -> MessageCreated:
+        """
+        Create a role in the space.
+
+        Roles are stored at auth/roles/{role_name} and can have capabilities
+        granted to them via grant_capability_to_role().
+
+        Args:
+            role_name: Name of the role to create
+            description: Optional description of the role
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If role creation fails
+        """
+        role_data = {
+            "role_id": role_name,
+        }
+        if description:
+            role_data["description"] = description
+
+        return await self.set_plaintext_state(
+            f"auth/roles/{role_name}",
+            json.dumps(role_data),
+        )
+
+    async def create_user(self, user_id: str, description: str | None = None) -> MessageCreated:
+        """
+        Create a user entry in the space.
+
+        Users are stored at auth/users/{user_id} and can have capabilities
+        granted to them via grant_capability_to_user().
+
+        Args:
+            user_id: Typed user identifier (U_...)
+            description: Optional description of the user
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If user creation fails
+        """
+        user_data = {
+            "user_id": user_id,
+        }
+        if description:
+            user_data["description"] = description
+
+        return await self.set_plaintext_state(
+            f"auth/users/{user_id}",
+            json.dumps(user_data),
+        )
+
+    async def grant_capability_to_role(
+        self,
+        role_name: str,
+        op: str,
+        path: str,
+        cap_id: str | None = None,
+    ) -> MessageCreated:
+        """
+        Grant a capability to a role.
+
+        Capabilities are stored at auth/roles/{role_name}/rights/{cap_id}.
+
+        Args:
+            role_name: Name of the role to grant the capability to
+            op: Operation to grant (read, create, modify, delete, write)
+            path: Resource path pattern the capability applies to
+            cap_id: Optional capability ID (auto-generated if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If capability creation fails
+        """
+        if cap_id is None:
+            cap_id = f"cap_{uuid.uuid4().hex[:8]}"
+
+        cap_data = {
+            "op": op,
+            "path": path,
+        }
+
+        return await self.set_plaintext_state(
+            f"auth/roles/{role_name}/rights/{cap_id}",
+            json.dumps(cap_data),
+        )
+
+    async def grant_capability_to_user(
+        self,
+        user_id: str,
+        op: str,
+        path: str,
+        cap_id: str | None = None,
+    ) -> MessageCreated:
+        """
+        Grant a capability to a user.
+
+        Capabilities are stored at auth/users/{user_id}/rights/{cap_id}.
+
+        Args:
+            user_id: Typed user identifier (U_...)
+            op: Operation to grant (read, create, modify, delete, write)
+            path: Resource path pattern the capability applies to
+            cap_id: Optional capability ID (auto-generated if not provided)
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If capability creation fails
+        """
+        if cap_id is None:
+            cap_id = f"cap_{uuid.uuid4().hex[:8]}"
+
+        cap_data = {
+            "op": op,
+            "path": path,
+        }
+
+        return await self.set_plaintext_state(
+            f"auth/users/{user_id}/rights/{cap_id}",
+            json.dumps(cap_data),
+        )
+
+    # ============================================================
     # OPAQUE Password-Based Key Recovery
     # ============================================================
 
@@ -1802,15 +2118,61 @@ class AsyncSpace:
                 if result["server_setup_created"]:
                     print("OPAQUE server setup created")
         """
-        from .opaque import enable_opaque_async as _enable_opaque_async
-
-        client = await self.get_client()
-        return await _enable_opaque_async(
-            client=client,
-            space_id=self.space_id,
-            user_id=self.keypair.to_user_id(),
-            private_key=self.keypair.private_key,
+        from .opaque import (
+            check_opaque_available,
+            OPAQUE_SERVER_SETUP_PATH,
+            OPAQUE_USER_ROLE_ID,
+            OPAQUE_USER_CAP_ID,
         )
+
+        check_opaque_available()
+
+        # Import OpaqueServer only after checking availability
+        from opaque_snake import OpaqueServer
+
+        result = {
+            "server_setup_created": False,
+            "role_created": False,
+            "capability_created": False,
+        }
+
+        # Step 1: Check/create OPAQUE server setup (stored in data store)
+        try:
+            await self.get_plaintext_data(OPAQUE_SERVER_SETUP_PATH)
+            # Server setup exists
+        except NotFoundError:
+            # Create new server setup
+            server = OpaqueServer()
+            setup_bytes = server.export_setup()
+            await self.set_plaintext_data(OPAQUE_SERVER_SETUP_PATH, setup_bytes)
+            result["server_setup_created"] = True
+
+        # Step 2: Check/create opaque-user role (stored in state)
+        try:
+            await self.get_plaintext_state(f"auth/roles/{OPAQUE_USER_ROLE_ID}")
+            # Role exists
+        except NotFoundError:
+            await self.create_role(
+                OPAQUE_USER_ROLE_ID,
+                description="Role for users who can register OPAQUE credentials",
+            )
+            result["role_created"] = True
+
+        # Step 3: Check/create CREATE capability for opaque/users/{any}
+        cap_path = f"auth/roles/{OPAQUE_USER_ROLE_ID}/rights/{OPAQUE_USER_CAP_ID}"
+        try:
+            await self.get_plaintext_state(cap_path)
+            # Capability exists
+        except NotFoundError:
+            await self.grant_capability_to_role(
+                OPAQUE_USER_ROLE_ID,
+                op="create",
+                path="data/opaque/users/*",
+                cap_id=OPAQUE_USER_CAP_ID,
+            )
+            result["capability_created"] = True
+
+        return result
 
 
 class AsyncAdminSpace(AsyncSpace):
