@@ -35,7 +35,7 @@ def random_username() -> str:
 class TestEnableOpaque:
     """Tests for the enable_opaque method."""
 
-    def test_should_create_server_setup_role_and_capability_on_first_call(
+    def test_create_server_setup_role_and_capability_on_first_call(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """enable_opaque should create all required resources on first call."""
@@ -100,7 +100,7 @@ class TestEnableOpaque:
 class TestOpaqueRegistrationAndLogin:
     """Tests for OPAQUE registration and login flow."""
 
-    def test_should_register_and_login_with_opaque_credentials(
+    def test_register_and_login_with_opaque_credentials(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """Full round-trip: register OPAQUE credentials, then login to recover them."""
@@ -151,7 +151,7 @@ class TestOpaqueRegistrationAndLogin:
                 retrieved = recovered_space.get_plaintext_state(test_path)
                 assert retrieved == test_data
 
-    def test_should_allow_multiple_opaque_registrations(
+    def test_allow_multiple_opaque_registrations(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """A user can register multiple OPAQUE usernames for the same keypair."""
@@ -195,7 +195,7 @@ class TestOpaqueRegistrationAndLogin:
             )
             assert credentials2.keypair.to_user_id() == fresh_keypair.to_user_id()
 
-    def test_should_fail_login_with_wrong_password(
+    def test_fail_login_with_wrong_password(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """OPAQUE login should fail with incorrect password."""
@@ -224,7 +224,7 @@ class TestOpaqueRegistrationAndLogin:
                     password="wrong-password",
                 )
 
-    def test_should_fail_login_with_nonexistent_username(
+    def test_fail_login_with_nonexistent_username(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """OPAQUE login should fail with non-existent username."""
@@ -252,7 +252,7 @@ class TestOpaqueRegistrationAndLogin:
 class TestAuthorizationUtilities:
     """Tests for authorization utility methods (roles, users, capabilities)."""
 
-    def test_should_create_and_manage_roles(
+    def test_create_and_manage_roles(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """create_role should store role data at the correct path."""
@@ -277,7 +277,7 @@ class TestAuthorizationUtilities:
             assert role["role_id"] == role_name
             assert role["description"] == "Test role description"
 
-    def test_should_create_and_manage_users(
+    def test_create_and_manage_users(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """create_user should store user data at the correct path."""
@@ -301,7 +301,7 @@ class TestAuthorizationUtilities:
             assert user["user_id"] == user_id
             assert user["description"] == "Test user"
 
-    def test_should_grant_capabilities_to_roles(
+    def test_grant_capabilities_to_roles(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """grant_capability_to_role should store capability at correct path."""
@@ -332,7 +332,7 @@ class TestAuthorizationUtilities:
             assert cap["op"] == "read"
             assert cap["path"] == "state/{...}"
 
-    def test_should_assign_roles_to_users(
+    def test_assign_roles_to_users(
         self, fresh_keypair, symmetric_root, base_url
     ):
         """assign_role_to_user should store role assignment at correct path."""
