@@ -16,7 +16,15 @@ import {
   generateKeyPair,
   stringToBytes,
 } from './crypto.js';
-import { postMessage, getMessages, getMessage } from './messages.js';
+import {
+  postMessage,
+  getMessages,
+  getMessage,
+  verifyMessageHash,
+  validateMessageChainWithAnchor,
+} from './messages.js';
+import type { MessageStore } from './local_store.js';
+import { ChainError } from './exceptions.js';
 import { getState, setState, getStateHistory } from './state.js';
 import { getData, setData } from './kvdata.js';
 import { uploadBlob, downloadBlob, deleteBlob, encryptAndUploadBlob, downloadAndDecryptBlob } from './blobs.js';
@@ -71,6 +79,7 @@ export class Space {
   readonly stateKey: Uint8Array;
 
   private fetchFn: typeof fetch;
+  private localStore: MessageStore | null;
 
   constructor(options: {
     spaceId: string;
@@ -78,6 +87,9 @@ export class Space {
     symmetricRoot: Uint8Array;
     baseUrl?: string;
     fetch?: typeof fetch;
+    /** Optional local message store for caching. When provided,
+     * messages are cached locally and retrieved from cache when available. */
+    localStore?: MessageStore;
   }) {
     const { spaceId, keyPair, symmetricRoot, baseUrl = 'http://localhost:8000' } = options;
 
@@ -90,6 +102,7 @@ export class Space {
     this.symmetricRoot = symmetricRoot;
     this.baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.fetchFn = options.fetch ?? fetch;
+    this.localStore = options.localStore ?? null;
 
     // Derive encryption keys from symmetricRoot using HKDF
     // Include spaceId in info for domain separation
@@ -252,13 +265,141 @@ export class Space {
   /**
    * Get messages from a topic.
    *
+   * When a localStore is configured and useCache is true, this method:
+   * 1. Checks if cached data might be stale (to > latest cached)
+   * 2. Fetches newer messages from server if needed
+   * 3. Validates message hashes and chain integrity
+   * 4. Fetches gap-filling messages if there's a gap between cached and new
+   * 5. Merges server results with cached data
+   * 6. Caches any new messages
+   *
    * @param topicId - Topic identifier
    * @param query - Optional query parameters
+   * @param options - Caching and validation options
    * @returns Messages response
    */
-  async getMessages(topicId: string, query?: MessageQuery): Promise<MessagesResponse> {
-    const token = await this.auth.getToken();
-    return getMessages(this.fetchFn, this.baseUrl, token, this.spaceId, topicId, query);
+  async getMessages(
+    topicId: string,
+    query?: MessageQuery,
+    options?: {
+      /** Whether to use local cache (default true) */
+      useCache?: boolean;
+      /** Whether to validate chain integrity (default true) */
+      validateChain?: boolean;
+    }
+  ): Promise<MessagesResponse> {
+    const useCache = options?.useCache ?? true;
+    const validateChain = options?.validateChain ?? true;
+
+    if (!useCache || !this.localStore) {
+      const serverMessages = await this._fetchMessagesFromServer(topicId, query);
+      if (validateChain && serverMessages.messages.length > 0) {
+        this._validateAndVerifyMessages(serverMessages.messages);
+      }
+      return serverMessages;
+    }
+
+    // Get cached messages and latest cached timestamp
+    const fromTimestamp = query?.from;
+    const toTimestamp = query?.to;
+    const limit = query?.limit ?? 100;
+
+    const cached = await this.localStore.getMessages(this.spaceId, topicId, {
+      fromTimestamp,
+      toTimestamp,
+      limit,
+    });
+    const latestCachedTs = await this.localStore.getLatestTimestamp(this.spaceId, topicId);
+
+    // Determine if we need to fetch from server
+    const needServerFetch =
+      toTimestamp === undefined ||
+      latestCachedTs === null ||
+      toTimestamp > latestCachedTs;
+
+    if (!needServerFetch && cached.length > 0) {
+      return { messages: cached, has_more: cached.length >= limit };
+    }
+
+    // Fetch from server - either everything or just newer messages
+    let serverFrom = fromTimestamp;
+    if (latestCachedTs !== null && cached.length > 0) {
+      serverFrom = latestCachedTs + 1;
+    }
+
+    const serverQuery: MessageQuery = { limit };
+    if (serverFrom !== undefined) serverQuery.from = serverFrom;
+    if (toTimestamp !== undefined) serverQuery.to = toTimestamp;
+
+    const serverResponse = await this._fetchMessagesFromServer(topicId, serverQuery);
+    const serverMessages = serverResponse.messages;
+
+    if (serverMessages.length === 0) {
+      return { messages: cached, has_more: cached.length >= limit };
+    }
+
+    // Validate hashes of all new messages
+    if (validateChain) {
+      for (const msg of serverMessages) {
+        if (!verifyMessageHash(this.spaceId, msg)) {
+          throw new ChainError(`Message hash verification failed for ${msg.message_hash}`);
+        }
+      }
+    }
+
+    // Check for gap between cached and new messages
+    if (validateChain && cached.length > 0) {
+      serverMessages.sort((a, b) => a.server_timestamp - b.server_timestamp);
+      const oldestNew = serverMessages[0];
+      const latestCached = cached.reduce((a, b) =>
+        a.server_timestamp > b.server_timestamp ? a : b
+      );
+
+      if (oldestNew.prev_hash !== null && oldestNew.prev_hash !== latestCached.message_hash) {
+        // Gap detected - fetch missing messages
+        const gapMessages = await this._fetchGapMessages(
+          topicId,
+          latestCached.message_hash,
+          oldestNew.prev_hash
+        );
+        if (gapMessages.length > 0) {
+          serverMessages.unshift(...gapMessages);
+        }
+      }
+    }
+
+    // Validate chain integrity if we have both cached and new messages
+    if (validateChain && cached.length > 0 && serverMessages.length > 0) {
+      const latestCached = cached.reduce((a, b) =>
+        a.server_timestamp > b.server_timestamp ? a : b
+      );
+      if (!validateMessageChainWithAnchor(this.spaceId, serverMessages, latestCached.message_hash)) {
+        // Check if chain starts from beginning (prev_hash is null)
+        serverMessages.sort((a, b) => a.server_timestamp - b.server_timestamp);
+        if (serverMessages[0].prev_hash !== null) {
+          throw new ChainError("Chain validation failed: new messages don't link to cached chain");
+        }
+      }
+    }
+
+    // Cache new messages (they've been validated)
+    await this.localStore.putMessages(this.spaceId, serverMessages);
+
+    // Merge cached and server messages, deduplicate by hash
+    const seenHashes = new Set<string>();
+    const merged: Message[] = [];
+    for (const msg of [...cached, ...serverMessages]) {
+      if (!seenHashes.has(msg.message_hash)) {
+        seenHashes.add(msg.message_hash);
+        merged.push(msg);
+      }
+    }
+    merged.sort((a, b) => a.server_timestamp - b.server_timestamp);
+
+    return {
+      messages: merged.slice(0, limit),
+      has_more: merged.length > limit || serverResponse.has_more,
+    };
   }
 
   /**
@@ -266,11 +407,94 @@ export class Space {
    *
    * @param topicId - Topic identifier
    * @param messageHash - Typed message identifier
+   * @param options - Caching options
    * @returns Message
    */
-  async getMessage(topicId: string, messageHash: string): Promise<Message> {
+  async getMessage(
+    topicId: string,
+    messageHash: string,
+    options?: { useCache?: boolean }
+  ): Promise<Message> {
+    const useCache = options?.useCache ?? true;
+
+    // Check local cache first
+    if (useCache && this.localStore) {
+      const cached = await this.localStore.getMessage(this.spaceId, topicId, messageHash);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    // Fetch from server
     const token = await this.auth.getToken();
-    return getMessage(this.fetchFn, this.baseUrl, token, this.spaceId, topicId, messageHash);
+    const message = await getMessage(this.fetchFn, this.baseUrl, token, this.spaceId, topicId, messageHash);
+
+    // Cache the message
+    if (useCache && this.localStore) {
+      await this.localStore.putMessage(this.spaceId, message);
+    }
+
+    return message;
+  }
+
+  /**
+   * Fetch messages directly from server without caching.
+   */
+  private async _fetchMessagesFromServer(
+    topicId: string,
+    query?: MessageQuery
+  ): Promise<MessagesResponse> {
+    const token = await this.auth.getToken();
+    return getMessages(this.fetchFn, this.baseUrl, token, this.spaceId, topicId, query);
+  }
+
+  /**
+   * Validate message hashes and chain for messages without cache.
+   */
+  private _validateAndVerifyMessages(messages: Message[]): void {
+    for (const msg of messages) {
+      if (!verifyMessageHash(this.spaceId, msg)) {
+        throw new ChainError(`Message hash verification failed for ${msg.message_hash}`);
+      }
+    }
+
+    // Validate chain links back to start or is internally consistent
+    messages.sort((a, b) => a.server_timestamp - b.server_timestamp);
+    if (messages.length > 0) {
+      const anchor = messages[0].prev_hash;
+      if (!validateMessageChainWithAnchor(this.spaceId, messages, anchor)) {
+        throw new ChainError("Chain validation failed: messages don't form valid chain");
+      }
+    }
+  }
+
+  /**
+   * Fetch messages to fill gap between cached head and new messages.
+   */
+  private async _fetchGapMessages(
+    topicId: string,
+    cachedHeadHash: string,
+    targetPrevHash: string,
+    maxIterations = 10
+  ): Promise<Message[]> {
+    const gapMessages: Message[] = [];
+    let currentHash: string | null = targetPrevHash;
+
+    for (let i = 0; i < maxIterations; i++) {
+      if (currentHash === null || currentHash === cachedHeadHash) {
+        break;
+      }
+
+      try {
+        const msg = await this.getMessage(topicId, currentHash, { useCache: false });
+        gapMessages.unshift(msg); // Prepend to maintain order
+        currentHash = msg.prev_hash;
+      } catch {
+        break;
+      }
+    }
+
+    return gapMessages;
   }
 
   /**

@@ -54,7 +54,7 @@ export async function uploadBlob(
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/octet-stream',
     },
-    body: data,
+    body: data as BodyInit,
     redirect: 'manual',
   });
 
@@ -71,7 +71,7 @@ export async function uploadBlob(
         'Content-Type': 'application/octet-stream',
         'x-amz-checksum-sha256': encodeBase64(hashBytes),
       },
-      body: data,
+      body: data as BodyInit,
     });
 
     if (!s3Response.ok) {
@@ -109,7 +109,7 @@ export async function uploadBlob(
     const s3Response = await fetchFn(result.upload_url, {
       method: 'PUT',
       headers,
-      body: data,
+      body: data as BodyInit,
     });
 
     if (!s3Response.ok) {

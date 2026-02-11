@@ -130,6 +130,8 @@ export {
   getMessages,
   getMessage,
   validateMessageChain,
+  validateMessageChainWithAnchor,
+  verifyMessageHash,
 } from './messages.js';
 
 // State operations
@@ -140,6 +142,11 @@ export { computeDataSignature, getData, setData } from './kvdata.js';
 
 // Blob operations
 export { computeBlobId, uploadBlob, downloadBlob, deleteBlob } from './blobs.js';
+
+// Local message store
+export type { MessageStore, MessageStoreQuery } from './local_store.js';
+export { InMemoryMessageStore } from './local_store.js';
+export { IndexedDBMessageStore } from './local_store_idb.js';
 
 // Debug logging
 export {

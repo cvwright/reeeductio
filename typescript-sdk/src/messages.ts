@@ -248,6 +248,30 @@ export async function getMessage(
 }
 
 /**
+ * Verify that a message's hash matches its content.
+ *
+ * @param spaceId - Typed space identifier
+ * @param msg - Message to verify
+ * @returns True if hash is valid, False otherwise
+ */
+export function verifyMessageHash(spaceId: string, msg: Message): boolean {
+  if (!msg.data) {
+    return true; // Can't verify without data
+  }
+
+  const expectedHash = computeMessageHash(
+    spaceId,
+    msg.topic_id,
+    msg.type,
+    msg.prev_hash,
+    msg.data,
+    msg.sender
+  );
+
+  return msg.message_hash === expectedHash;
+}
+
+/**
  * Validate that a list of messages forms a valid chain.
  *
  * @param spaceId - Typed space identifier
@@ -290,6 +314,63 @@ export function validateMessageChain(spaceId: string, messages: Message[]): bool
         actualHash: msg.message_hash,
         messageHash: msg.message_hash,
       });
+      return false;
+    }
+
+    prevHash = msg.message_hash;
+  }
+
+  return true;
+}
+
+/**
+ * Validate that a list of messages forms a valid chain starting from an anchor.
+ *
+ * @param spaceId - Typed space identifier
+ * @param messages - List of Message objects in chronological order
+ * @param anchorHash - Expected prev_hash of the first message (null for topic start)
+ * @returns True if chain is valid, False otherwise
+ */
+export function validateMessageChainWithAnchor(
+  spaceId: string,
+  messages: Message[],
+  anchorHash: string | null
+): boolean {
+  if (messages.length === 0) {
+    return true;
+  }
+
+  // First message must link to anchor
+  if (messages[0].prev_hash !== anchorHash) {
+    return false;
+  }
+
+  // Validate the chain starting from the anchor
+  let prevHash: string | null = anchorHash;
+
+  for (const msg of messages) {
+    // Check that prev_hash matches
+    if (msg.prev_hash !== prevHash) {
+      return false;
+    }
+
+    // Skip validation if data is missing
+    if (!msg.data) {
+      prevHash = msg.message_hash;
+      continue;
+    }
+
+    // Verify message hash
+    const expectedHash = computeMessageHash(
+      spaceId,
+      msg.topic_id,
+      msg.type,
+      msg.prev_hash,
+      msg.data,
+      msg.sender
+    );
+
+    if (msg.message_hash !== expectedHash) {
       return false;
     }
 
