@@ -8,9 +8,12 @@ Note: This is the legacy data storage system. New state storage should use
 the event-sourced StateStore which stores state as messages in the message chain.
 """
 
+import base64
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, Union
 from lru_cache import LRUCache
+from crypto import CryptoUtils
+from identifiers import extract_public_key
 
 
 class DataStore(ABC):
@@ -27,6 +30,18 @@ class DataStore(ABC):
         # Remote storage backends (DynamoDB, etc.) should leave this as None
         # to avoid cache coherency issues across multiple application instances
         self._cache: Optional[LRUCache] = None
+        self._crypto = CryptoUtils()
+
+    def _verify_data_signature(
+        self,
+        space_id: str,
+        entry: Dict[str, Any]
+    ) -> bool:
+        """Verify the Ed25519 signature on a data entry"""
+        message = f"{space_id}|{entry['path']}|{entry['data']}|{entry['signed_at']}".encode('utf-8')
+        signature_bytes = base64.b64decode(entry['signature'])
+        public_key_bytes = extract_public_key(entry['signed_by'])
+        return self._crypto.verify_signature(message, signature_bytes, public_key_bytes)
 
     @abstractmethod
     def get_data(

@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Any
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from data_store import DataStore
+from lru_cache import LRUCache
 
 
 class FirestoreDataStore(DataStore):
@@ -26,8 +27,7 @@ class FirestoreDataStore(DataStore):
             database_id: Firestore database ID (default: "(default)")
         """
         super().__init__()
-        # No cache for remote storage (multi-instance safety)
-        self._cache = None
+        self._cache = LRUCache()
 
         if project_id:
             self.db = firestore.Client(project=project_id, database=database_id)
@@ -78,13 +78,20 @@ class FirestoreDataStore(DataStore):
             return None
 
         data = doc.to_dict()
-        return {
+        result = {
             'path': data['path'],
             'data': data['data'],
             'signature': data['signature'],
             'signed_by': data['signed_by'],
             'signed_at': data['signed_at']
         }
+
+        VERIFY_SIGNATURE_ON_READ = False
+        if VERIFY_SIGNATURE_ON_READ and not self._verify_data_signature(space_id, result):
+            print(f"WARNING: Invalid signature on data at {path} in space {space_id}")
+            return None
+
+        return result
 
     def set_data(
         self,
@@ -96,6 +103,16 @@ class FirestoreDataStore(DataStore):
         signed_at: int
     ) -> None:
         """Set data value in Firestore (signature required)"""
+        entry = {
+            'path': path,
+            'data': data,
+            'signature': signature,
+            'signed_by': signed_by,
+            'signed_at': signed_at
+        }
+        if not self._verify_data_signature(space_id, entry):
+            raise ValueError(f"Invalid signature on data for path {path}")
+
         doc_id = self._encode_path(path)
         doc_ref = self.db.collection('spaces').document(space_id) \
                         .collection('kv_data').document(doc_id)
@@ -117,6 +134,8 @@ class FirestoreDataStore(DataStore):
         doc = doc_ref.get()
         if doc.exists:
             doc_ref.delete()
+            cache_key = f"kv_data:{space_id}:{path}"
+            self._cache.pop(cache_key, None)
             return True
         return False
 

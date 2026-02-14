@@ -138,6 +138,16 @@ class SqlDataStore(DataStore):
         signed_at: int
     ) -> None:
         """Set state value (data should be base64-encoded string, signature required)"""
+        entry = {
+            'path': path,
+            'data': data,
+            'signature': signature,
+            'signed_by': signed_by,
+            'signed_at': signed_at
+        }
+        if not self._verify_data_signature(space_id, entry):
+            raise ValueError(f"Invalid signature on data for path {path}")
+
         ph = self._get_placeholder
 
         with self.get_connection() as conn:

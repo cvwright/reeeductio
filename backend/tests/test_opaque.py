@@ -80,7 +80,8 @@ def opaque_enabled_space(unique_space, unique_admin_keypair, opaque_server):
 
     # Use data_store.set_data directly to avoid JSON encoding issues
     # The setup is stored as raw base64 bytes
-    message = f"{space.space_id}|opaque/server/setup|{setup_b64}|{int(time.time() * 1000)}"
+    signed_at = int(time.time() * 1000)
+    message = f"{space.space_id}|opaque/server/setup|{setup_b64}|{signed_at}"
     signature_bytes = admin_keypair['private'].sign(message.encode('utf-8'))
     signature = base64.b64encode(signature_bytes).decode('utf-8')
 
@@ -90,7 +91,7 @@ def opaque_enabled_space(unique_space, unique_admin_keypair, opaque_server):
         data=setup_b64,  # Store raw base64, not JSON-encoded
         signature=signature,
         signed_by=admin_keypair['user_id'],
-        signed_at=int(time.time() * 1000)
+        signed_at=signed_at
     )
 
     # Clear the cached server to force reload from data store
@@ -308,7 +309,8 @@ class TestOpaqueRegistration:
 
         # Store directly to data store
         record_b64_for_storage = base64.b64encode(json.dumps(opaque_record).encode()).decode()
-        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{int(time.time() * 1000)}"
+        signed_at = int(time.time() * 1000)
+        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{signed_at}"
         signature_bytes = admin_keypair['private'].sign(message.encode('utf-8'))
         signature = base64.b64encode(signature_bytes).decode('utf-8')
 
@@ -318,7 +320,7 @@ class TestOpaqueRegistration:
             data=record_b64_for_storage,
             signature=signature,
             signed_by=admin_keypair['user_id'],
-            signed_at=int(time.time() * 1000)
+            signed_at=signed_at
         )
 
         # Try to register same username again - should fail at init
@@ -405,7 +407,8 @@ class TestOpaqueLogin:
             "public_key": admin_keypair['user_id']
         }
         record_b64_for_storage = base64.b64encode(json.dumps(opaque_record).encode()).decode()
-        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{int(time.time() * 1000)}"
+        signed_at = int(time.time() * 1000)
+        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{signed_at}"
         signature_bytes = admin_keypair['private'].sign(message.encode('utf-8'))
         signature = base64.b64encode(signature_bytes).decode('utf-8')
 
@@ -415,7 +418,7 @@ class TestOpaqueLogin:
             data=record_b64_for_storage,
             signature=signature,
             signed_by=admin_keypair['user_id'],
-            signed_at=int(time.time() * 1000)
+            signed_at=signed_at
         )
 
         # Now try to login with wrong password
@@ -518,7 +521,8 @@ class TestOpaqueFullFlow:
             "public_key": user_id
         }
         record_b64_for_storage = base64.b64encode(json.dumps(opaque_record).encode()).decode()
-        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{int(time.time() * 1000)}"
+        signed_at = int(time.time() * 1000)
+        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{signed_at}"
         signature_bytes = admin_keypair['private'].sign(message.encode('utf-8'))
         signature = base64.b64encode(signature_bytes).decode('utf-8')
 
@@ -528,7 +532,7 @@ class TestOpaqueFullFlow:
             data=record_b64_for_storage,
             signature=signature,
             signed_by=admin_keypair['user_id'],
-            signed_at=int(time.time() * 1000)
+            signed_at=signed_at
         )
 
         # === LOGIN ===
@@ -665,7 +669,8 @@ class TestOpaqueStateExpiration:
             "public_key": admin_keypair['user_id']
         }
         record_b64_for_storage = base64.b64encode(json.dumps(opaque_record).encode()).decode()
-        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{int(time.time() * 1000)}"
+        signed_at = int(time.time() * 1000)
+        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{signed_at}"
         signature_bytes = admin_keypair['private'].sign(message.encode('utf-8'))
         signature = base64.b64encode(signature_bytes).decode('utf-8')
 
@@ -675,7 +680,7 @@ class TestOpaqueStateExpiration:
             data=record_b64_for_storage,
             signature=signature,
             signed_by=admin_keypair['user_id'],
-            signed_at=int(time.time() * 1000)
+            signed_at=signed_at
         )
 
         # Set a very short expiry for testing
@@ -783,7 +788,8 @@ class TestOpaqueInvalidInput:
             "public_key": admin_keypair['user_id']
         }
         record_b64_for_storage = base64.b64encode(json.dumps(opaque_record).encode()).decode()
-        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{int(time.time() * 1000)}"
+        signed_at = int(time.time() * 1000)
+        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{signed_at}"
         signature_bytes = admin_keypair['private'].sign(message.encode('utf-8'))
         signature = base64.b64encode(signature_bytes).decode('utf-8')
 
@@ -793,7 +799,7 @@ class TestOpaqueInvalidInput:
             data=record_b64_for_storage,
             signature=signature,
             signed_by=admin_keypair['user_id'],
-            signed_at=int(time.time() * 1000)
+            signed_at=signed_at
         )
 
         # Try login with invalid request
@@ -842,7 +848,8 @@ class TestOpaqueInvalidInput:
             "public_key": admin_keypair['user_id']
         }
         record_b64_for_storage = base64.b64encode(json.dumps(opaque_record).encode()).decode()
-        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{int(time.time() * 1000)}"
+        signed_at = int(time.time() * 1000)
+        message = f"{space.space_id}|opaque/users/{username}|{record_b64_for_storage}|{signed_at}"
         signature_bytes = admin_keypair['private'].sign(message.encode('utf-8'))
         signature = base64.b64encode(signature_bytes).decode('utf-8')
 
@@ -852,7 +859,7 @@ class TestOpaqueInvalidInput:
             data=record_b64_for_storage,
             signature=signature,
             signed_by=admin_keypair['user_id'],
-            signed_at=int(time.time() * 1000)
+            signed_at=signed_at
         )
 
         # Do valid login init
