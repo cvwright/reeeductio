@@ -2,7 +2,8 @@
 
 rEEEductio is an end-to-end encrypted (EEE) data layer that makes it absurdly simple to build an app with secure messaging and encrypted cloud storage.
 
-It handles all the complexity of encryption, hashing, signing, verification, key derivation, authentication, and authorization.  Developers are then free to focus on building the core features of their apps.
+It handles all the complexity of encryption, hashing, signing, verification, key derivation, authentication, and authorization.
+Developers are then free to focus on building the core features of their apps.
 
 rEEEductio is available as open source, under a permissive license, so you can use it to build what you want.
 Several components are provided, including:
@@ -16,35 +17,51 @@ Several components are provided, including:
 
 **Messaging**
 
-Each space can contain multiple independent topics. The messages in each topic form a blockchain-style hash chain for tamper detection. Messages are end-to-end encrypted and signed client-side before being sent to the server, so the server only ever sees opaque ciphertext.
+Each space can contain multiple independent topics.
+The messages in each topic form a blockchain-style hash chain for tamper detection.
+Messages are end-to-end encrypted and signed client-side before being sent to the server, so the server only ever sees opaque ciphertext.
 
 **Cloud Storage**
 
-rEEEductio provides content-addressable blob storage where files are encrypted client-side, identified by the SHA-256 hash of their ciphertext. Spaces also include a hierarchical key-value state store, backed by the message hash chain for full audit history, and a lightweight signed key-value data store for application data that doesn't need event-sourced history. All storage paths are governed by the same capability-based authorization system used for messaging, providing unified access control across the entire data layer.
+rEEEductio provides content-addressable blob storage where files are encrypted client-side, identified by the SHA-256 hash of their ciphertext.
+Spaces also include a hierarchical key-value state store, backed by the message hash chain for full audit history, and a more lightweight signed key-value data store for application data that doesn't need event-sourced history.
+All storage paths are governed by the same capability-based authorization system used for messaging, providing unified access control across the entire data layer.
 
 ## Security
 
 **Encryption**
 
-All message content, blob data, and application state are encrypted client-side using AES-GCM before leaving the device. The server operates in a true zero-knowledge mode — it stores and relays only opaque ciphertext and never has access to plaintext or key material. Each space derives its encryption keys from a single shared symmetric root key using HKDF-SHA256 with domain-separated info strings, providing cryptographic isolation between messages, blobs, state, and key-value data without requiring users to manage multiple keys.
+Message content, blob data, and application state can be encrypted client-side using AES-GCM before leaving the device.
+The server operates in a true zero-knowledge mode — it stores and relays only opaque ciphertext and never has access to plaintext or key material.
+Each space derives its encryption keys from a single shared symmetric root using HKDF-SHA256, with domain-separated info strings.
+This provides cryptographic isolation between messages, blobs, state, and key-value data without requiring users to manage multiple keys per space.
 
 **Integrity**
 
-Every message is individually signed with the sender's Ed25519 key and includes a SHA-256 hash computed over its space, topic, type, payload, sender, and the hash of the preceding message. This creates a per-topic hash chain that makes tampering, reordering, or deletion of messages detectable by any participant. State entries are similarly signed and timestamped, and blobs are content-addressed by the SHA-256 hash of their ciphertext, ensuring integrity at rest.
+Every message is individually signed with the sender's Ed25519 key and includes a SHA-256 hash computed over its space id, topic id, message type, payload, sender, and the hash of the preceding message.
+This creates a per-topic hash chain that makes tampering, reordering, or deletion of messages detectable by any participant.
+State entries are similarly signed and timestamped, and blobs are content-addressed by the SHA-256 hash of their ciphertext, ensuring integrity at rest.
 
 **Authentication**
 
-Users authenticate via Ed25519 challenge-response: the server issues a random nonce, and the client signs it with its private key to prove possession without ever transmitting the key. Successful authentication yields a short-lived JWT for subsequent API calls. For optional key recovery, rEEEductio implements the OPAQUE asymmetric PAKE protocol, which allows users to set up a username and password without the server ever learning the password or being able to derive the user's private key from it.
+Users authenticate via Ed25519 challenge-response: the server issues a random nonce, and the client signs it with its private key to prove possession without ever transmitting the key.
+Successful authentication yields a short-lived JWT for subsequent API calls. 
+For optional key recovery, rEEEductio implements the OPAQUE asymmetric PAKE protocol, which allows users to set up a username and password without the server ever learning the password or being able to derive the user's private key from it.
 
 **Authorization**
 
-Access control is built on a capability-based system where each capability is a signed grant specifying a subject, an operation (read, create, modify, delete, or the compound write), and a path pattern with wildcards (`{self}`, `{any}`, `{...}`). Capabilities form a chain of trust rooted at the space creator, and the server validates each chain before permitting an action. Role-based access control is layered on top, with roles mapping to sets of capabilities for convenient administration. Tool accounts (limited-use API keys) receive only explicitly granted capabilities with no ambient authority, enabling use cases like invite links and bots with tightly scoped permissions.
+Access control is built on a capability-based system where each capability is a signed grant specifying a subject, an operation (read, create, modify, delete, or the compound write), and a path pattern with wildcards (`{self}`, `{any}`, `{...}`).
+Capabilities form a chain of trust rooted at the space creator, and the server validates each chain before permitting an action.
+Role-based access control is layered on top, with roles mapping to sets of capabilities for convenient administration.
+Tool accounts (limited-use API keys) receive only explicitly granted capabilities with no ambient authority, enabling use cases like invite links and bots with tightly scoped permissions.
 
 
 ## Core Concepts
 
 ### Spaces
-Spaces are the core data structure in rEEEductio, somewhat similar to the concept of a "room" in Matrix or a "group" in Signal.  Everything happens in a Space, and each Space stands alone as its own self-contained thing. Each space has:
+Spaces are the core data structure in rEEEductio, somewhat similar to the concept of a "room" in Matrix or a "group" in Signal.
+Everything happens in a Space, and each Space stands alone as its own self-contained thing.
+Each space has:
 - A unique Ed25519 public key as its identifier.  The "root" user who created the space holds the private key.
 - Zero or more non-root users, identified by their Ed25519 public keys
 - A shared symmetric key for deriving encryption keys, known only to the users and not to the server
@@ -54,7 +71,8 @@ Spaces are the core data structure in rEEEductio, somewhat similar to the concep
 - Content-addressable object ("blob") storage for files and other large data.  Blobs are identified by the SHA-256 hash of their content.
 
 ### Topics
-Topics are message streams within a space. Each topic maintains:
+Topics are message streams within a space.
+Each topic maintains:
 - A blockchain-style hash chain of messages (each message links to the previous via `prev_hash`)
 - Independent message sequences (across topics)
 - Linear ordering of messages within a topic is verified and enforced by the server
