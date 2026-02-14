@@ -148,6 +148,11 @@ class AdminConfig(BaseModel):
         default=None,
         description="Base64-encoded Ed25519 private key for admin user (32 bytes)"
     )
+    auto_create_spaces: bool = Field(
+        default=False,
+        description="If true, automatically create spaces on first use without "
+                    "requiring registration in the admin space"
+    )
 
 
 class ServerConfig(BaseSettings):

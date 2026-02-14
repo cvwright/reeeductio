@@ -3,6 +3,15 @@ Custom exceptions for the messaging system
 """
 
 
+class SpaceNotFoundError(Exception):
+    """
+    Raised when a space is requested but has not been registered in the admin space.
+
+    Client should register the space in the admin space before attempting to use it.
+    """
+    pass
+
+
 class ChainConflictError(Exception):
     """
     Raised when a message's prev_hash doesn't match the current chain head.

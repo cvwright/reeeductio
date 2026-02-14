@@ -67,6 +67,13 @@ logging:
   # Enable uvicorn access logs
   enable_access_log: true
 
+# Admin space configuration
+# admin:
+#   space_id: C_...         # Admin space ID (enables admin API when set)
+#   user_id: U_...          # Admin user ID for server-initiated operations
+#   private_key: base64...  # Base64-encoded Ed25519 private key for admin user
+#   auto_create_spaces: false  # If true, allow spaces without admin registration
+
 # Application settings
 environment: production  # development, production, or test
 debug: false

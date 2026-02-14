@@ -20,6 +20,16 @@ import conftest
 set_space_state = conftest.set_space_state
 authenticate_with_challenge = conftest.authenticate_with_challenge
 
+
+@pytest.fixture(autouse=True)
+def allow_auto_create_spaces():
+    """Allow the global space_manager to auto-create spaces for tests."""
+    old_value = space_manager.auto_create_spaces
+    space_manager.auto_create_spaces = True
+    yield
+    space_manager.auto_create_spaces = old_value
+
+
 class TestWebSocketAuthentication:
     """Test WebSocket authentication"""
 

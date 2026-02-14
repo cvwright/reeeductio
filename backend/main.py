@@ -29,6 +29,7 @@ from filesystem_blob_store import FilesystemBlobStore
 from firestore_data_store import FirestoreDataStore
 from firestore_message_store import FirestoreMessageStore
 from space_manager import SpaceManager
+from exceptions import SpaceNotFoundError
 from logging_config import setup_logging, get_logger
 from identifiers import extract_public_key, encode_user_id
 
@@ -62,6 +63,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(SpaceNotFoundError)
+async def space_not_found_handler(request: Request, exc: SpaceNotFoundError):
+    raise HTTPException(status_code=404, detail=str(exc))
+
 
 # JWT configuration
 JWT_SECRET = config.server.jwt_secret or secrets.token_urlsafe(32)
@@ -107,7 +114,8 @@ space_manager = SpaceManager(
     jwt_secret=JWT_SECRET,
     jwt_algorithm=JWT_ALGORITHM,
     jwt_expiry_hours=JWT_EXPIRY_HOURS,
-    admin_space_id=config.admin.space_id
+    admin_space_id=config.admin.space_id,
+    auto_create_spaces=config.admin.auto_create_spaces
 )
 crypto = CryptoUtils()
 security = HTTPBearer()

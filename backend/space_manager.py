@@ -19,6 +19,7 @@ from sqlite_data_store import SqliteDataStore
 from sqlite_message_store import SqliteMessageStore
 from blob_store import BlobStore
 from lru_cache import LRUCache
+from exceptions import SpaceNotFoundError
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -46,7 +47,8 @@ class SpaceManager:
         jwt_secret: Optional[str] = None,
         jwt_algorithm: str = "HS256",
         jwt_expiry_hours: int = 24,
-        admin_space_id: Optional[str] = None
+        admin_space_id: Optional[str] = None,
+        auto_create_spaces: bool = False
     ):
         """
         Initialize the space manager.
@@ -62,6 +64,8 @@ class SpaceManager:
             jwt_algorithm: JWT signing algorithm
             jwt_expiry_hours: JWT token expiry in hours
             admin_space_id: Optional admin space ID (uses AdminSpace class for this space)
+            auto_create_spaces: If True, automatically create spaces on first use without
+                requiring registration in the admin space. Defaults to False.
         """
         self.base_storage_dir = base_storage_dir
         self.max_cached_spaces = max_cached_spaces
@@ -70,6 +74,7 @@ class SpaceManager:
         self.message_store_factory = message_store_factory
         self.blob_store = blob_store
         self.admin_space_id = admin_space_id
+        self.auto_create_spaces = auto_create_spaces
 
         # JWT configuration (shared across all spaces)
         self.jwt_secret = jwt_secret
@@ -79,8 +84,9 @@ class SpaceManager:
         # LRU cache: space_id -> Space instance
         self._spaces = LRUCache(max_size=max_cached_spaces)
 
-        # Lock for thread-safe access
-        self._lock = threading.Lock()
+        # Lock for thread-safe access (RLock to allow recursive get_space calls
+        # e.g. when looking up the admin space to verify a regular space)
+        self._lock = threading.RLock()
 
         # Redis pub/sub (optional, for cross-instance WebSocket broadcasting)
         if redis_client:
@@ -91,12 +97,18 @@ class SpaceManager:
         Get or create a Space instance.
 
         Returns AdminSpace for the admin space ID, regular Space for others.
+        Unless auto_create_spaces is True, regular spaces must be registered
+        in the admin space before they can be used.
 
         Args:
             space_id: Space identifier
 
         Returns:
             Space instance for the given ID (AdminSpace if admin_space_id matches)
+
+        Raises:
+            SpaceNotFoundError: If the space is not registered in the admin space
+                and auto_create_spaces is False
         """
         with self._lock:
             # Check if space exists in cache
@@ -106,6 +118,25 @@ class SpaceManager:
                 return cached_space
 
             is_admin_space = (self.admin_space_id and space_id == self.admin_space_id)
+
+            # For non-admin spaces, verify the space is registered unless
+            # auto_create_spaces is enabled
+            if not is_admin_space and not self.auto_create_spaces:
+                if not self.admin_space_id:
+                    raise SpaceNotFoundError(
+                        f"Space '{space_id}' not found: no admin space configured "
+                        f"and auto_create_spaces is disabled"
+                    )
+                # Look up the space in the admin space's registry
+                admin_space = self.get_space(self.admin_space_id)
+                registration = admin_space.state_store.get_state(
+                    self.admin_space_id, f"spaces/{space_id}"
+                )
+                if registration is None:
+                    raise SpaceNotFoundError(
+                        f"Space '{space_id}' is not registered in the admin space"
+                    )
+
             space_type = "admin" if is_admin_space else "regular"
             logger.info(f"Creating new {space_type} space instance: {space_id}")
 

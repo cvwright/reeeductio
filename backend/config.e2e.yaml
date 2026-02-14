@@ -42,3 +42,4 @@ admin:
   space_id: "CIqI4910CfGV_VLbLTy6XXLKZwm_HZQSG_N0iAG0D29c"
   user_id: "UIqI4910CfGV_VLbLTy6XXLKZwm_HZQSG_N0iAG0D29c"
   private_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+  auto_create_spaces: true
