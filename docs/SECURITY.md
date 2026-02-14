@@ -26,8 +26,18 @@ The validity of the state can be verified by replaying the sequence of updates, 
 ### Blob Integrity
 Blobs are identified by the SHA-256 hash of their content. The hash is checked whenever a blob is uploaded or downloaded.
 
-### KV Store Integrity
+### KV Data Store Integrity
 Each entry the the Space's key-value store is signed by the user who uploaded it.  The signature covers both the state path (ie the key) and the data stored at that path (ie the value).
+
+**WARNING**
+Unlike the event-sourced key-value store for the space's state, the "data" kv store is not backed by a block chain of messages.
+Therefore entries in the kv data are not secure against a replacement attack, where a compromised server can replace the current value for a given key with any previous value for the same key.
+
+The attack can be mitigated somewhat because data entries are timestamped.
+A client that has the previous entry already cached can compare timestamps and see that a newer entry has been replaced by an older entry.
+However, a new client or one querying the given key for the first time will not detect the attack.
+
+The real solution is simply to store any security-sensitive kv data in the space's state rather than in the data store.
 
 ## Accounts
 
