@@ -1,55 +1,51 @@
 # rEEEductio: Absurdly Simple Encrypted Spaces
 
-rEEEductio is an end-to-end encrypted (EEE) data layer that makes it absurdly simple to build an app with secure messaging and encrypted cloud storage.
+rEEEductio is an end-to-end encrypted (EEE) data layer that makes it absurdly simple to build apps with secure messaging and encrypted cloud storage.
 
 It handles all the complexity of encryption, hashing, signing, verification, key derivation, authentication, and authorization.
-Developers are then free to focus on building the core features of their apps.
+Developers are then free to focus on building the core features that make their apps unique.
 
 rEEEductio is available as open source, under a permissive license, so you can use it to build what you want.
 Several components are provided, including:
 
-* A Python [backend](./backend/) built on FastAPI
-* A Python [client SDK](./new-python-sdk/) built on httpx
+* An [OpenAPI spec](./openapi.yaml) for the protocol
+* A Python [backend](./backend/) built on [FastAPI](https://fastapi.tiangolo.com/)
+* A Python [client SDK](./new-python-sdk/) built on [httpx](https://www.python-httpx.org/)
 * A set of [command-line tools](./new-python-sdk/reeeductio/cli/) built on the Python SDK
 * A TypeScript [client SDK](./typescript-sdk/) that works both in the browser and in Node
 
 ## Features
 
-**Messaging**
+### Secure Messaging
 
 Each space can contain multiple independent topics.
 The messages in each topic form a blockchain-style hash chain for tamper detection.
 Messages are end-to-end encrypted and signed client-side before being sent to the server, so the server only ever sees opaque ciphertext.
 
-**Cloud Storage**
-
+### Cloud Storage
 rEEEductio provides content-addressable blob storage where files are encrypted client-side, identified by the SHA-256 hash of their ciphertext.
 Spaces also include a hierarchical key-value state store, backed by the message hash chain for full audit history, and a more lightweight signed key-value data store for application data that doesn't need event-sourced history.
 All storage paths are governed by the same capability-based authorization system used for messaging, providing unified access control across the entire data layer.
 
 ## Security
 
-**Encryption**
-
+### Encryption
 Message content, blob data, and application state can be encrypted client-side using AES-GCM before leaving the device.
 The server operates in a true zero-knowledge mode — it stores and relays only opaque ciphertext and never has access to plaintext or key material.
 Each space derives its encryption keys from a single shared symmetric root using HKDF-SHA256, with domain-separated info strings.
 This provides cryptographic isolation between messages, blobs, state, and key-value data without requiring users to manage multiple keys per space.
 
-**Integrity**
-
+### Integrity
 Every message is individually signed with the sender's Ed25519 key and includes a SHA-256 hash computed over its space id, topic id, message type, payload, sender, and the hash of the preceding message.
 This creates a per-topic hash chain that makes tampering, reordering, or deletion of messages detectable by any participant.
 State entries are similarly signed and timestamped, and blobs are content-addressed by the SHA-256 hash of their ciphertext, ensuring integrity at rest.
 
-**Authentication**
-
+### Authentication
 Users authenticate via Ed25519 challenge-response: the server issues a random nonce, and the client signs it with its private key to prove possession without ever transmitting the key.
 Successful authentication yields a short-lived JWT for subsequent API calls. 
 For optional key recovery, rEEEductio implements the OPAQUE asymmetric PAKE protocol, which allows users to set up a username and password without the server ever learning the password or being able to derive the user's private key from it.
 
-**Authorization**
-
+### Authorization
 Access control is built on a capability-based system where each capability is a signed grant specifying a subject, an operation (read, create, modify, delete, or the compound write), and a path pattern with wildcards (`{self}`, `{any}`, `{...}`).
 Capabilities form a chain of trust rooted at the space creator, and the server validates each chain before permitting an action.
 Role-based access control is layered on top, with roles mapping to sets of capabilities for convenient administration.
