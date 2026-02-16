@@ -5,6 +5,8 @@ import uuid
 
 import pytest
 
+import json
+
 from reeeductio import Space, Ed25519KeyPair, generate_keypair, NotFoundError
 
 pytestmark = pytest.mark.e2e
@@ -18,6 +20,19 @@ def space(fresh_keypair, symmetric_root, base_url):
         space_id=space_id,
         keypair=fresh_keypair,
         symmetric_root=symmetric_root,
+        base_url=base_url,
+    ) as s:
+        yield s
+
+
+@pytest.fixture
+def root_space(admin_keypair, admin_symmetric_root, base_url):
+    """Create a Space client authenticated as the root user of the space."""
+    space_id = admin_keypair.to_space_id()
+    with Space(
+        space_id=space_id,
+        keypair=admin_keypair,
+        symmetric_root=admin_symmetric_root,
         base_url=base_url,
     ) as s:
         yield s
@@ -217,3 +232,92 @@ class TestEncryptedKVData:
         space.set_encrypted_data(path, data)
         raw = space.get_plaintext_data(path)
         assert raw != data
+
+
+class TestCreateTool:
+    def test_create_tool_stores_entry(self, space):
+        """create_tool should store tool data at auth/tools/{tool_id}."""
+        keypair = generate_keypair()
+        tool_id = keypair.to_tool_id()
+
+        result = space.create_tool(tool_id, "Test tool")
+        assert result.message_hash is not None
+        assert result.message_hash.startswith("M")
+
+        tool_data = space.get_plaintext_state(f"auth/tools/{tool_id}")
+        tool = json.loads(tool_data)
+        assert tool["tool_id"] == tool_id
+        assert tool["description"] == "Test tool"
+
+    def test_create_tool_without_description(self, space):
+        """create_tool should work without a description."""
+        keypair = generate_keypair()
+        tool_id = keypair.to_tool_id()
+
+        result = space.create_tool(tool_id)
+        assert result.message_hash is not None
+
+        tool_data = space.get_plaintext_state(f"auth/tools/{tool_id}")
+        tool = json.loads(tool_data)
+        assert tool["tool_id"] == tool_id
+        assert "description" not in tool
+
+
+class TestCreateInvitation:
+    def test_create_invitation_returns_keypair(self, root_space):
+        """create_invitation should return an Ed25519KeyPair."""
+        keypair = root_space.create_invitation()
+        assert isinstance(keypair, Ed25519KeyPair)
+        assert len(keypair.private_key) == 32
+        assert len(keypair.public_key) == 32
+
+    def test_create_invitation_creates_tool_entry(self, root_space):
+        """create_invitation should create a tool entry for the keypair."""
+        keypair = root_space.create_invitation(description="Test invitation")
+        tool_id = keypair.to_tool_id()
+
+        tool_data = root_space.get_plaintext_state(f"auth/tools/{tool_id}")
+        tool = json.loads(tool_data)
+        assert tool["tool_id"] == tool_id
+        assert tool["description"] == "Test invitation"
+
+    def test_create_invitation_grants_create_user_capability(self, root_space):
+        """create_invitation should grant the tool permission to create users."""
+        keypair = root_space.create_invitation()
+        tool_id = keypair.to_tool_id()
+
+        cap_data = root_space.get_plaintext_state(
+            f"auth/tools/{tool_id}/rights/can_create_user"
+        )
+        cap = json.loads(cap_data)
+        assert cap["op"] == "create"
+        assert cap["path"] == "state/auth/users/{any}"
+
+    def test_create_invitation_grants_assign_user_role_capability(self, root_space):
+        """create_invitation should grant the tool permission to assign the user role."""
+        keypair = root_space.create_invitation()
+        tool_id = keypair.to_tool_id()
+
+        cap_data = root_space.get_plaintext_state(
+            f"auth/tools/{tool_id}/rights/can_grant_user_role"
+        )
+        cap = json.loads(cap_data)
+        assert cap["op"] == "create"
+        assert cap["path"] == "state/auth/users/{any}/roles/user"
+
+    def test_create_multiple_invitations_are_independent(self, root_space):
+        """Each create_invitation call should produce a unique tool."""
+        keypair1 = root_space.create_invitation()
+        keypair2 = root_space.create_invitation()
+
+        assert keypair1.to_tool_id() != keypair2.to_tool_id()
+
+        # Both tools should exist independently
+        tool1 = json.loads(
+            root_space.get_plaintext_state(f"auth/tools/{keypair1.to_tool_id()}")
+        )
+        tool2 = json.loads(
+            root_space.get_plaintext_state(f"auth/tools/{keypair2.to_tool_id()}")
+        )
+        assert tool1["tool_id"] == keypair1.to_tool_id()
+        assert tool2["tool_id"] == keypair2.to_tool_id()

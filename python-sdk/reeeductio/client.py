@@ -20,7 +20,7 @@ from websockets.asyncio.client import ClientConnection
 
 from . import blobs, kvdata, messages, state
 from .auth import AsyncAuthSession, AuthSession
-from .crypto import Ed25519KeyPair, decrypt_aes_gcm, encrypt_aes_gcm, derive_key
+from .crypto import Ed25519KeyPair, decrypt_aes_gcm, encrypt_aes_gcm, derive_key, generate_keypair
 from .exceptions import ChainError, NotFoundError, StreamError, ValidationError
 from .messages import validate_message_chain_with_anchor, verify_message_hash
 from .local_store import LocalMessageStore
@@ -861,6 +861,34 @@ class Space:
             json.dumps(user_data),
         )
 
+    def create_tool(self, tool_id: str, description: str | None = None) -> MessageCreated:
+        """
+        Create a tool entry in the space.
+
+        Tools are stored at auth/tools/{tool_id} and can have capabilities
+        granted to them via grant_capability_to_tool().
+
+        Args:
+            tool_id: Typed tool identifier (T_...)
+            description: Optional description of the tool
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If tool creation fails
+        """
+        tool_data = {
+            "tool_id": tool_id,
+        }
+        if description:
+            tool_data["description"] = description
+
+        return self.set_plaintext_state(
+            f"auth/tools/{tool_id}",
+            json.dumps(tool_data),
+        )
+
     def grant_capability_to_role(
         self,
         role_name: str,
@@ -967,6 +995,40 @@ class Space:
             f"auth/tools/{tool_id}/rights/{cap_id}",
             json.dumps(capability),
         )
+
+    def create_invitation(self, description: str | None = None) -> Ed25519KeyPair:
+        """
+        Create an invitation tool that can add a new user to the space.
+
+        Generates a new keypair, creates a tool entry for it, and grants
+        the tool capabilities to create a user and assign them the "user" role.
+
+        Args:
+            description: Optional description of the invitation
+
+        Returns:
+            Ed25519KeyPair for the invitation tool. The recipient will use this
+            keypair to authenticate and add themselves to the space.
+
+        Raises:
+            ValidationError: If tool or capability creation fails
+        """
+        keypair = generate_keypair()
+        tool_id = keypair.to_tool_id()
+
+        self.create_tool(tool_id, description=description)
+        self.grant_capability_to_tool(
+            tool_id,
+            "can_create_user",
+            {"op": "create", "path": "state/auth/users/{any}"},
+        )
+        self.grant_capability_to_tool(
+            tool_id,
+            "can_grant_user_role",
+            {"op": "create", "path": "state/auth/users/{any}/roles/user"},
+        )
+
+        return keypair
 
     # ============================================================
     # OPAQUE Password-Based Key Recovery
@@ -2353,6 +2415,34 @@ class AsyncSpace:
             json.dumps(user_data),
         )
 
+    async def create_tool(self, tool_id: str, description: str | None = None) -> MessageCreated:
+        """
+        Create a tool entry in the space.
+
+        Tools are stored at auth/tools/{tool_id} and can have capabilities
+        granted to them via grant_capability_to_tool().
+
+        Args:
+            tool_id: Typed tool identifier (T_...)
+            description: Optional description of the tool
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If tool creation fails
+        """
+        tool_data = {
+            "tool_id": tool_id,
+        }
+        if description:
+            tool_data["description"] = description
+
+        return await self.set_plaintext_state(
+            f"auth/tools/{tool_id}",
+            json.dumps(tool_data),
+        )
+
     async def grant_capability_to_role(
         self,
         role_name: str,
@@ -2459,6 +2549,40 @@ class AsyncSpace:
             f"auth/tools/{tool_id}/rights/{cap_id}",
             json.dumps(capability),
         )
+
+    async def create_invitation(self, description: str | None = None) -> Ed25519KeyPair:
+        """
+        Create an invitation tool that can add a new user to the space.
+
+        Generates a new keypair, creates a tool entry for it, and grants
+        the tool capabilities to create a user and assign them the "user" role.
+
+        Args:
+            description: Optional description of the invitation
+
+        Returns:
+            Ed25519KeyPair for the invitation tool. The recipient will use this
+            keypair to authenticate and add themselves to the space.
+
+        Raises:
+            ValidationError: If tool or capability creation fails
+        """
+        keypair = generate_keypair()
+        tool_id = keypair.to_tool_id()
+
+        await self.create_tool(tool_id, description=description)
+        await self.grant_capability_to_tool(
+            tool_id,
+            "can_create_user",
+            {"op": "create", "path": "state/auth/users/{any}"},
+        )
+        await self.grant_capability_to_tool(
+            tool_id,
+            "can_grant_user_role",
+            {"op": "create", "path": "state/auth/users/{any}/roles/user"},
+        )
+
+        return keypair
 
     # ============================================================
     # OPAQUE Password-Based Key Recovery
