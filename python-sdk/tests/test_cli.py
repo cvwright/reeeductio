@@ -389,6 +389,69 @@ class TestToolCommands:
         assert result.exit_code != 0
 
 
+class TestOpaqueCommands:
+    """Tests for OPAQUE management commands."""
+
+    def test_opaque_enable_missing_space_key(self, runner):
+        """Test opaque enable without space key."""
+        result = runner.invoke(cli, ["opaque", "enable", "-s", "ab" * 32])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_opaque_enable_missing_symmetric_root(self, runner):
+        """Test opaque enable without symmetric root."""
+        result = runner.invoke(cli, ["opaque", "enable", "-k", "ab" * 32])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_opaque_enable_invalid_symmetric_root(self, runner):
+        """Test opaque enable with invalid symmetric root format."""
+        result = runner.invoke(cli, ["opaque", "enable", "-k", "ab" * 32, "-s", "tooshort"])
+
+        assert result.exit_code != 0
+        assert "64 hex characters" in result.output
+
+    def test_opaque_register_missing_space_key(self, runner):
+        """Test opaque register without space key."""
+        result = runner.invoke(
+            cli,
+            ["opaque", "register", "-s", "ab" * 32, "-n", "testuser", "-p", "testpass"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_opaque_register_missing_symmetric_root(self, runner):
+        """Test opaque register without symmetric root."""
+        result = runner.invoke(
+            cli,
+            ["opaque", "register", "-k", "ab" * 32, "-n", "testuser", "-p", "testpass"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_opaque_register_missing_username(self, runner):
+        """Test opaque register without username."""
+        result = runner.invoke(
+            cli,
+            ["opaque", "register", "-k", "ab" * 32, "-s", "cd" * 32, "-p", "testpass"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_opaque_help(self, runner):
+        """Test opaque command group help."""
+        result = runner.invoke(cli, ["opaque", "--help"])
+
+        assert result.exit_code == 0
+        assert "enable" in result.output
+        assert "register" in result.output
+
+
 class TestGlobalOptions:
     """Tests for global CLI options."""
 
@@ -404,6 +467,7 @@ class TestGlobalOptions:
         assert "auth" in result.output
         assert "user" in result.output
         assert "tool" in result.output
+        assert "opaque" in result.output
 
     def test_version(self, runner):
         """Test --version option."""
