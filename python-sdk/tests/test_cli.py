@@ -333,6 +333,57 @@ class TestUserCommands:
 
         assert result.exit_code != 0
 
+    def test_user_grant_missing_cap_id(self, runner):
+        """Test user grant without cap-id."""
+        result = runner.invoke(
+            cli,
+            ["user", "grant", "U" + "A" * 43, "-k", "ab" * 32, "-s", "cd" * 32,
+             "--op", "read", "--path", "data/foo"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_user_grant_missing_op(self, runner):
+        """Test user grant without op."""
+        result = runner.invoke(
+            cli,
+            ["user", "grant", "U" + "A" * 43, "-k", "ab" * 32, "-s", "cd" * 32,
+             "-c", "cap1", "--path", "data/foo"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_user_grant_missing_path(self, runner):
+        """Test user grant without path."""
+        result = runner.invoke(
+            cli,
+            ["user", "grant", "U" + "A" * 43, "-k", "ab" * 32, "-s", "cd" * 32,
+             "-c", "cap1", "--op", "read"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_user_assign_role_missing_role(self, runner):
+        """Test user assign-role without role."""
+        result = runner.invoke(
+            cli,
+            ["user", "assign-role", "U" + "A" * 43, "-k", "ab" * 32, "-s", "cd" * 32],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_user_help_shows_new_commands(self, runner):
+        """Test user help shows grant and assign-role."""
+        result = runner.invoke(cli, ["user", "--help"])
+
+        assert result.exit_code == 0
+        assert "grant" in result.output
+        assert "assign-role" in result.output
+
 
 class TestToolCommands:
     """Tests for tool management commands."""
@@ -387,6 +438,111 @@ class TestToolCommands:
         result = runner.invoke(cli, ["tool", "list"])
 
         assert result.exit_code != 0
+
+    def test_tool_grant_missing_cap_id(self, runner):
+        """Test tool grant without cap-id."""
+        result = runner.invoke(
+            cli,
+            ["tool", "grant", "T" + "A" * 43, "-k", "ab" * 32, "-s", "cd" * 32,
+             "--op", "read", "--path", "data/foo"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_tool_grant_missing_op(self, runner):
+        """Test tool grant without op."""
+        result = runner.invoke(
+            cli,
+            ["tool", "grant", "T" + "A" * 43, "-k", "ab" * 32, "-s", "cd" * 32,
+             "-c", "cap1", "--path", "data/foo"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_tool_help_shows_grant(self, runner):
+        """Test tool help shows grant command."""
+        result = runner.invoke(cli, ["tool", "--help"])
+
+        assert result.exit_code == 0
+        assert "grant" in result.output
+
+
+class TestRoleCommands:
+    """Tests for role management commands."""
+
+    def test_role_create_missing_space_key(self, runner):
+        """Test role create without space key."""
+        result = runner.invoke(cli, ["role", "create", "myrole", "-s", "ab" * 32])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_role_create_missing_symmetric_root(self, runner):
+        """Test role create without symmetric root."""
+        result = runner.invoke(cli, ["role", "create", "myrole", "-k", "ab" * 32])
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_role_create_missing_role_name(self, runner):
+        """Test role create without role name argument."""
+        result = runner.invoke(cli, ["role", "create", "-k", "ab" * 32, "-s", "cd" * 32])
+
+        assert result.exit_code != 0
+        assert "Missing argument" in result.output
+
+    def test_role_grant_missing_cap_id(self, runner):
+        """Test role grant without cap-id."""
+        result = runner.invoke(
+            cli,
+            ["role", "grant", "myrole", "-k", "ab" * 32, "-s", "cd" * 32,
+             "--op", "read", "--path", "data/foo"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_role_grant_missing_op(self, runner):
+        """Test role grant without op."""
+        result = runner.invoke(
+            cli,
+            ["role", "grant", "myrole", "-k", "ab" * 32, "-s", "cd" * 32,
+             "-c", "cap1", "--path", "data/foo"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_role_grant_missing_path(self, runner):
+        """Test role grant without path."""
+        result = runner.invoke(
+            cli,
+            ["role", "grant", "myrole", "-k", "ab" * 32, "-s", "cd" * 32,
+             "-c", "cap1", "--op", "read"],
+        )
+
+        assert result.exit_code != 0
+        assert "Missing option" in result.output or "required" in result.output.lower()
+
+    def test_role_grant_invalid_op(self, runner):
+        """Test role grant with invalid operation."""
+        result = runner.invoke(
+            cli,
+            ["role", "grant", "myrole", "-k", "ab" * 32, "-s", "cd" * 32,
+             "-c", "cap1", "--op", "invalid", "--path", "data/foo"],
+        )
+
+        assert result.exit_code != 0
+
+    def test_role_help(self, runner):
+        """Test role command group help."""
+        result = runner.invoke(cli, ["role", "--help"])
+
+        assert result.exit_code == 0
+        assert "create" in result.output
+        assert "grant" in result.output
 
 
 class TestOpaqueCommands:
@@ -468,6 +624,7 @@ class TestGlobalOptions:
         assert "user" in result.output
         assert "tool" in result.output
         assert "opaque" in result.output
+        assert "role" in result.output
 
     def test_version(self, runner):
         """Test --version option."""

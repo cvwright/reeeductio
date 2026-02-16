@@ -941,6 +941,33 @@ class Space:
             json.dumps(capability),
         )
 
+    def grant_capability_to_tool(
+        self,
+        tool_id: str,
+        cap_id: str,
+        capability: dict,
+    ) -> MessageCreated:
+        """
+        Grant a capability to a tool.
+
+        Capabilities are stored at auth/tools/{tool_id}/rights/{cap_id}.
+
+        Args:
+            tool_id: Typed tool identifier (T_...)
+            cap_id: Capability ID
+            capability: Capability dict with 'op' and 'path' keys
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If capability creation fails
+        """
+        return self.set_plaintext_state(
+            f"auth/tools/{tool_id}/rights/{cap_id}",
+            json.dumps(capability),
+        )
+
     # ============================================================
     # OPAQUE Password-Based Key Recovery
     # ============================================================
@@ -2403,6 +2430,33 @@ class AsyncSpace:
         """
         return await self.set_plaintext_state(
             f"auth/users/{user_id}/rights/{cap_id}",
+            json.dumps(capability),
+        )
+
+    async def grant_capability_to_tool(
+        self,
+        tool_id: str,
+        cap_id: str,
+        capability: dict,
+    ) -> MessageCreated:
+        """
+        Grant a capability to a tool.
+
+        Capabilities are stored at auth/tools/{tool_id}/rights/{cap_id}.
+
+        Args:
+            tool_id: Typed tool identifier (T_...)
+            cap_id: Capability ID
+            capability: Capability dict with 'op' and 'path' keys
+
+        Returns:
+            MessageCreated with message_hash and server_timestamp
+
+        Raises:
+            ValidationError: If capability creation fails
+        """
+        return await self.set_plaintext_state(
+            f"auth/tools/{tool_id}/rights/{cap_id}",
             json.dumps(capability),
         )
 

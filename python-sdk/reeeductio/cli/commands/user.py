@@ -176,6 +176,125 @@ def list_users(ctx, space_key: str, symmetric_root: str, output_format: str):
             click.echo(f"No users found in space {space_id}")
 
 
+@user.command("grant")
+@click.argument("user_id")
+@click.option(
+    "--space-key",
+    "-k",
+    required=True,
+    help="Space owner's private key in hex format",
+)
+@click.option(
+    "--symmetric-root",
+    "-s",
+    required=True,
+    help="Space's symmetric root key in hex format",
+)
+@click.option(
+    "--cap-id",
+    "-c",
+    required=True,
+    help="Capability ID",
+)
+@click.option(
+    "--op",
+    required=True,
+    type=click.Choice(["read", "create", "modify", "delete", "write"]),
+    help="Operation to grant",
+)
+@click.option(
+    "--path",
+    required=True,
+    help="Resource path for the capability",
+)
+@click.pass_context
+@handle_errors
+def grant_user(ctx, user_id: str, space_key: str, symmetric_root: str, cap_id: str, op: str, path: str):
+    """Grant a capability to a user.
+
+    USER_ID: The user's 44-character identifier (starting with 'U')
+    """
+    base_url = ctx.obj["base_url"]
+
+    if len(user_id) != 44:
+        raise click.BadParameter(f"User ID must be 44 characters, got {len(user_id)}")
+    try:
+        id_type = get_identifier_type(user_id)
+        if id_type != "USER":
+            raise click.BadParameter(f"Expected USER identifier, got {id_type}")
+    except ValueError as e:
+        raise click.BadParameter(str(e))
+
+    keypair = parse_private_key(space_key)
+    sym_root = _parse_symmetric_root(symmetric_root)
+    space_id = keypair.to_space_id()
+
+    with Space(
+        space_id=space_id,
+        keypair=keypair,
+        symmetric_root=sym_root,
+        base_url=base_url,
+    ) as space:
+        space.grant_capability_to_user(user_id, cap_id, {"op": op, "path": path})
+
+    click.echo(f"Capability granted to user {user_id}: {op} on {path}")
+    click.echo(f"Space: {space_id}")
+
+
+@user.command("assign-role")
+@click.argument("user_id")
+@click.option(
+    "--space-key",
+    "-k",
+    required=True,
+    help="Space owner's private key in hex format",
+)
+@click.option(
+    "--symmetric-root",
+    "-s",
+    required=True,
+    help="Space's symmetric root key in hex format",
+)
+@click.option(
+    "--role",
+    "-r",
+    required=True,
+    help="Name of the role to assign",
+)
+@click.pass_context
+@handle_errors
+def assign_role(ctx, user_id: str, space_key: str, symmetric_root: str, role: str):
+    """Assign a role to a user.
+
+    USER_ID: The user's 44-character identifier (starting with 'U')
+    """
+    base_url = ctx.obj["base_url"]
+
+    if len(user_id) != 44:
+        raise click.BadParameter(f"User ID must be 44 characters, got {len(user_id)}")
+    try:
+        id_type = get_identifier_type(user_id)
+        if id_type != "USER":
+            raise click.BadParameter(f"Expected USER identifier, got {id_type}")
+    except ValueError as e:
+        raise click.BadParameter(str(e))
+
+    keypair = parse_private_key(space_key)
+    sym_root = _parse_symmetric_root(symmetric_root)
+    space_id = keypair.to_space_id()
+
+    with Space(
+        space_id=space_id,
+        keypair=keypair,
+        symmetric_root=sym_root,
+        base_url=base_url,
+    ) as space:
+        space.assign_role_to_user(user_id, role)
+
+    click.echo(f"Role '{role}' assigned to user {user_id}")
+    click.echo(f"Space: {space_id}")
+
+
 def _parse_symmetric_root(symmetric_root_hex: str) -> bytes:
     """Parse a hex-encoded symmetric root key."""
     try:

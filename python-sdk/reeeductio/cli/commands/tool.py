@@ -176,6 +176,71 @@ def list_tools(ctx, space_key: str, symmetric_root: str, output_format: str):
             click.echo(f"No tools found in space {space_id}")
 
 
+@tool.command("grant")
+@click.argument("tool_id")
+@click.option(
+    "--space-key",
+    "-k",
+    required=True,
+    help="Space owner's private key in hex format",
+)
+@click.option(
+    "--symmetric-root",
+    "-s",
+    required=True,
+    help="Space's symmetric root key in hex format",
+)
+@click.option(
+    "--cap-id",
+    "-c",
+    required=True,
+    help="Capability ID",
+)
+@click.option(
+    "--op",
+    required=True,
+    type=click.Choice(["read", "create", "modify", "delete", "write"]),
+    help="Operation to grant",
+)
+@click.option(
+    "--path",
+    required=True,
+    help="Resource path for the capability",
+)
+@click.pass_context
+@handle_errors
+def grant_tool(ctx, tool_id: str, space_key: str, symmetric_root: str, cap_id: str, op: str, path: str):
+    """Grant a capability to a tool.
+
+    TOOL_ID: The tool's 44-character identifier (starting with 'T')
+    """
+    base_url = ctx.obj["base_url"]
+
+    if len(tool_id) != 44:
+        raise click.BadParameter(f"Tool ID must be 44 characters, got {len(tool_id)}")
+    try:
+        id_type = get_identifier_type(tool_id)
+        if id_type != "TOOL":
+            raise click.BadParameter(f"Expected TOOL identifier, got {id_type}")
+    except ValueError as e:
+        raise click.BadParameter(str(e))
+
+    keypair = parse_private_key(space_key)
+    sym_root = _parse_symmetric_root(symmetric_root)
+    space_id = keypair.to_space_id()
+
+    with Space(
+        space_id=space_id,
+        keypair=keypair,
+        symmetric_root=sym_root,
+        base_url=base_url,
+    ) as space:
+        space.grant_capability_to_tool(tool_id, cap_id, {"op": op, "path": path})
+
+    click.echo(f"Capability granted to tool {tool_id}: {op} on {path}")
+    click.echo(f"Space: {space_id}")
+
+
 def _parse_symmetric_root(symmetric_root_hex: str) -> bytes:
     """Parse a hex-encoded symmetric root key."""
     try:

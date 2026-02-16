@@ -2,7 +2,7 @@
 
 import click
 
-from .commands import auth, blob, key, opaque, space, tool, user
+from .commands import auth, blob, key, opaque, role, space, tool, user
 
 
 def _get_version() -> str:
@@ -45,6 +45,7 @@ cli.add_command(auth.auth)
 cli.add_command(user.user)
 cli.add_command(tool.tool)
 cli.add_command(opaque.opaque)
+cli.add_command(role.role)
 
 
 if __name__ == "__main__":
