@@ -58,8 +58,8 @@ services:
   # Backend service configured for e2e testing
   reeeductio:
     build:
-      context: ..
-      dockerfile: backend/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "0.0.0.0:8000:8000"
     depends_on:
