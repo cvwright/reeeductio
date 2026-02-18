@@ -13,11 +13,11 @@ COPY pyproject.toml /app/
 # Install dependencies using uv
 RUN uv pip install --system -r pyproject.toml
 
-# Copy backend application code
-COPY backend/ /app/backend/
+# Copy application code
+COPY . /app/
 
-# Set working directory to backend
-WORKDIR /app/backend
+# Set working directory
+WORKDIR /app
 
 # Create directories for persistent data
 RUN mkdir -p /data/blobs

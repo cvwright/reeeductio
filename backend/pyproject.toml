@@ -26,22 +26,8 @@ dev = [
     "testcontainers[google,minio]>=4.0.0",  # For Firestore and MinIO emulators in tests
 ]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["."]
-only-include = [
-    "main.py",
-    "database.py",
-    "crypto.py",
-    "authorization.py",
-    "example_client.py",
-]
-
 [tool.pytest.ini_options]
-testpaths = ["backend/tests"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
