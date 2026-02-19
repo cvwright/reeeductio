@@ -43,7 +43,7 @@ function createMessageChain(count: number, topicId = 'test-topic'): Message[] {
 function testMessageStore(name: string, createStore: () => Promise<MessageStore>, cleanup?: () => Promise<void>) {
   describe(name, () => {
     let store: MessageStore;
-    const spaceId = 'C' + 'a'.repeat(43);
+    const spaceId = 'S' + 'a'.repeat(43);
 
     beforeEach(async () => {
       store = await createStore();
@@ -291,7 +291,7 @@ function testMessageStore(name: string, createStore: () => Promise<MessageStore>
       });
 
       it('should not affect other spaces', async () => {
-        const space2 = 'C' + 'b'.repeat(43);
+        const space2 = 'S' + 'b'.repeat(43);
         const space1Messages = createMessageChain(2);
         const space2Messages = createMessageChain(3);
 
@@ -307,7 +307,7 @@ function testMessageStore(name: string, createStore: () => Promise<MessageStore>
 
     describe('clear', () => {
       it('should delete all messages', async () => {
-        const space2 = 'C' + 'b'.repeat(43);
+        const space2 = 'S' + 'b'.repeat(43);
         await store.putMessages(spaceId, createMessageChain(5));
         await store.putMessages(space2, createMessageChain(3));
 
@@ -326,7 +326,7 @@ function testMessageStore(name: string, createStore: () => Promise<MessageStore>
       });
 
       it('should count messages by space', async () => {
-        const space2 = 'C' + 'b'.repeat(43);
+        const space2 = 'S' + 'b'.repeat(43);
         await store.putMessages(spaceId, createMessageChain(5));
         await store.putMessages(space2, createMessageChain(3));
 
@@ -338,7 +338,7 @@ function testMessageStore(name: string, createStore: () => Promise<MessageStore>
 
     describe('space isolation', () => {
       it('should isolate messages between spaces', async () => {
-        const space2 = 'C' + 'b'.repeat(43);
+        const space2 = 'S' + 'b'.repeat(43);
         const space1Messages = createMessageChain(2);
         const space2Messages = createMessageChain(3);
 
@@ -353,7 +353,7 @@ function testMessageStore(name: string, createStore: () => Promise<MessageStore>
       });
 
       it('should not find message from different space', async () => {
-        const space2 = 'C' + 'b'.repeat(43);
+        const space2 = 'S' + 'b'.repeat(43);
         const msg = createMessage();
         await store.putMessage(spaceId, msg);
 
@@ -391,7 +391,7 @@ testMessageStore(
 // Additional IndexedDB-specific tests
 describe('IndexedDBMessageStore specific', () => {
   let store: IndexedDBMessageStore;
-  const spaceId = 'C' + 'a'.repeat(43);
+  const spaceId = 'S' + 'a'.repeat(43);
 
   beforeEach(async () => {
     store = new IndexedDBMessageStore('test-idb-specific');

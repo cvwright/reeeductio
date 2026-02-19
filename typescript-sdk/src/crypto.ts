@@ -231,18 +231,18 @@ export function toToolId(publicKey: Uint8Array): string {
 /**
  * Convert public key to space identifier format (44-char URL-safe base64).
  *
- * Creates header byte with SPACE type (0b000010) in first 6 bits and version 0 in last 2 bits.
- * The header value 0x08 (0b00001000) encodes to 'C' as the first base64 character.
+ * Creates header byte with SPACE type (0b010010) in first 6 bits and version 0 in last 2 bits.
+ * The header value 0x48 (0b01001000) encodes to 'S' as the first base64 character.
  *
  * @param publicKey - 32-byte Ed25519 public key
- * @returns 44-character URL-safe base64 string starting with 'C'
+ * @returns 44-character URL-safe base64 string starting with 'S'
  */
 export function toSpaceId(publicKey: Uint8Array): string {
   if (publicKey.length !== 32) {
     throw new Error(`Public key must be exactly 32 bytes, got ${publicKey.length}`);
   }
-  // Header: [6 bits: SPACE type (2 = 0b000010)][2 bits: version (0)]
-  const header = (IdType.SPACE << 2) | 0; // = 0x08
+  // Header: [6 bits: SPACE type (18 = 0b010010)][2 bits: version (0)]
+  const header = (IdType.SPACE << 2) | 0; // = 0x48
   const typed = new Uint8Array(33);
   typed[0] = header;
   typed.set(publicKey, 1);

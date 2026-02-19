@@ -7,8 +7,8 @@
 export enum IdType {
   /** BLOB type (1 = 0b000001) - SHA256 hash identifier, prefix 'B' */
   BLOB = 0b000001,
-  /** SPACE type (2 = 0b000010) - Ed25519 public key, prefix 'C' */
-  SPACE = 0b000010,
+  /** SPACE type (18 = 0b010010) - Ed25519 public key, prefix 'S' */
+  SPACE = 0b010010,
   /** MESSAGE type (12 = 0b001100) - SHA256 hash identifier, prefix 'M' */
   MESSAGE = 0b001100,
   /** TOOL type (19 = 0b010011) - Ed25519 public key, prefix 'T' */
@@ -280,7 +280,7 @@ export interface ApiError {
 export interface SpaceConfig {
   /** Base URL of the API server */
   baseUrl: string;
-  /** Space identifier (44-char base64, starts with 'C') */
+  /** Space identifier (44-char base64, starts with 'S') */
   spaceId: string;
   /** Optional symmetric key for encryption (32 bytes) */
   symmetricKey?: Uint8Array;

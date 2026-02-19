@@ -59,14 +59,14 @@ class Ed25519KeyPair:
         """
         Convert public key to space identifier format (44-char URL-safe base64).
 
-        Creates header byte with SPACE type (0b000010) in first 6 bits and version 0 in last 2 bits.
-        The header value 0x08 (0b00001000) encodes to 'C' as the first base64 character.
+        Creates header byte with SPACE type (0b010010) in first 6 bits and version 0 in last 2 bits.
+        The header value 0x48 (0b01001000) encodes to 'S' as the first base64 character.
 
         Returns:
-            44-character URL-safe base64 string starting with 'C'
+            44-character URL-safe base64 string starting with 'S'
         """
-        # Header: [6 bits: SPACE type (2 = 0b000010)][2 bits: version (0)]
-        header = (0b000010 << 2) | 0  # = 0x08
+        # Header: [6 bits: SPACE type (18 = 0b010010)][2 bits: version (0)]
+        header = (0b010010 << 2) | 0  # = 0x48
         typed_key = bytes([header]) + self.public_key
         return base64.urlsafe_b64encode(typed_key).decode("ascii")
 
@@ -100,8 +100,8 @@ class Ed25519KeyPair:
         header = decoded[0]
         type_bits = (header >> 2) & 0b111111
 
-        # Validate it's a public key type (USER=20, TOOL=19, SPACE=2)
-        valid_types = {0b010100, 0b010011, 0b000010}  # USER, TOOL, SPACE
+        # Validate it's a public key type (USER=20, TOOL=19, SPACE=18)
+        valid_types = {0b010100, 0b010011, 0b010010}  # USER, TOOL, SPACE
         if type_bits not in valid_types:
             raise ValueError(f"Identifier is not a USER, TOOL, or SPACE type: {type_bits:06b}")
 
@@ -135,7 +135,7 @@ def get_identifier_type(typed_key: str) -> str:
     type_map = {
         0b010100: "USER",    # 20
         0b010011: "TOOL",    # 19
-        0b000010: "SPACE",   # 2
+        0b010010: "SPACE",   # 18
         0b001100: "MESSAGE", # 12
         0b000001: "BLOB",    # 1
     }

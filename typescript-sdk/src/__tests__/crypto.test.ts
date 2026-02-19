@@ -273,7 +273,7 @@ describe('Typed Identifiers', () => {
       const spaceId = toSpaceId(keyPair.publicKey);
 
       expect(spaceId.length).toBe(44);
-      expect(spaceId[0]).toBe('C');
+      expect(spaceId[0]).toBe('S');
     });
   });
 

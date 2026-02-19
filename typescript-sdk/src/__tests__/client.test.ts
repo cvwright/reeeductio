@@ -275,7 +275,7 @@ describe('AdminClient', () => {
     it('should fetch the admin space ID', async () => {
       const keyPair = await generateKeyPair();
       const challengeBytes = new Uint8Array(32).fill(1);
-      const adminSpaceId = 'C' + 'a'.repeat(43);
+      const adminSpaceId = 'S' + 'a'.repeat(43);
 
       mockFetch
         // Auth challenge

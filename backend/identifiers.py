@@ -18,7 +18,7 @@ from typing import Union
 
 class IdType(Enum):
     """Identifier type codes using the first 6 bits of the header byte"""
-    SPACE = 0b000010  # 'C' in base64 (2)
+    SPACE = 0b010010  # 'S' in base64 (18)
     MESSAGE = 0b001100  # 'M' in base64 (12)
     USER = 0b010100     # 'U' in base64 (20)
     BLOB = 0b000001     # 'B' in base64 (1)
@@ -27,7 +27,7 @@ class IdType(Enum):
 
 # Base64 character mappings for the type codes
 TYPE_TO_CHAR = {
-    IdType.SPACE: 'C',  # 0b000010 = 2  -> 'C' in standard base64
+    IdType.SPACE: 'S',  # 0b010010 = 18 -> 'S' in standard base64
     IdType.MESSAGE: 'M',  # 0b001100 = 12 -> 'M'
     IdType.USER: 'U',     # 0b010100 = 20 -> 'U'
     IdType.BLOB: 'B',     # 0b000001 = 1  -> 'B'
