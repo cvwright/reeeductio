@@ -26,6 +26,16 @@ dev = [
     "testcontainers[google,minio]>=4.0.0",  # For Firestore and MinIO emulators in tests
 ]
 
+[tool.setuptools]
+py-modules = [
+    "admin_space", "authorization", "blob_store", "config", "crypto",
+    "data_store", "event_sourced_state_store", "exceptions", "filesystem_blob_store",
+    "firestore_data_store", "firestore_message_store", "identifiers", "logging_config",
+    "lru_cache", "main", "message_store", "path_validation", "s3_blob_store",
+    "space", "space_manager", "sql_data_store", "sql_message_store",
+    "sqlite_blob_store", "sqlite_data_store", "sqlite_message_store", "state_store"
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
