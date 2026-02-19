@@ -71,14 +71,14 @@ services:
         condition: service_completed_successfully
     environment:
       # Use config file
-      CONFIG_FILE: /app/backend/config.e2e.yaml
+      CONFIG_FILE: /app/config.e2e.yaml
       # Override Firestore to use emulator
       FIRESTORE_EMULATOR_HOST: firestore:8080
       GCLOUD_PROJECT: e2e-test-project
     volumes:
       # Mount the e2e config file
-      - ./config.e2e.yaml:/app/backend/config.e2e.yaml:ro
-    working_dir: /app/backend
+      - ./config.e2e.yaml:/app/config.e2e.yaml:ro
+    working_dir: /app
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
