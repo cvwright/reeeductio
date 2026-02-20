@@ -227,10 +227,13 @@ export class Space {
   ): Promise<MessageCreated> {
     const token = await this.auth.getToken();
 
-    // Fetch prev_hash if not provided (get latest message using reverse order)
+    // Fetch prev_hash if not provided (get latest message using reverse order).
+    // Always bypass the local cache: after a write the local cache doesn't
+    // contain the just-written message, so a cached lookup would return a
+    // stale hash that the server would reject with 409.
     if (prevHash === undefined) {
       const now = Date.now();
-      const msgs = await this.getMessages('state', { from: now, to: 0, limit: 1 });
+      const msgs = await this.getMessages('state', { from: now, to: 0, limit: 1 }, { useCache: false });
       prevHash = msgs.messages.length > 0 ? msgs.messages[0].message_hash : null;
     }
 
