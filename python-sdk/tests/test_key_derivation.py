@@ -79,13 +79,11 @@ class TestSpaceKeyDerivation:
 
         # Verify all keys exist
         assert hasattr(space, "message_key")
-        assert hasattr(space, "blob_key")
         assert hasattr(space, "state_key")
         assert hasattr(space, "data_key")
 
         # Verify all keys are 32 bytes
         assert len(space.message_key) == 32
-        assert len(space.blob_key) == 32
         assert len(space.state_key) == 32
         assert len(space.data_key) == 32
 
@@ -105,7 +103,7 @@ class TestSpaceKeyDerivation:
         )
 
         # All keys should be different
-        keys = [space.message_key, space.blob_key, space.state_key, space.data_key]
+        keys = [space.message_key, space.state_key, space.data_key]
         assert len(keys) == len(set(keys)), "All derived keys should be unique"
 
     def test_space_key_derivation_matches_manual(self):
@@ -116,7 +114,6 @@ class TestSpaceKeyDerivation:
 
         # Manual derivation
         message_key = derive_key(root, f"message key | {space_id}")
-        blob_key = derive_key(root, f"blob key | {space_id}")
         state_key = derive_key(message_key, "topic key | state")
         data_key = derive_key(root, f"data key | {space_id}")
 
@@ -132,7 +129,6 @@ class TestSpaceKeyDerivation:
 
         # Should match
         assert space.message_key == message_key
-        assert space.blob_key == blob_key
         assert space.state_key == state_key
         assert space.data_key == data_key
 
@@ -162,7 +158,6 @@ class TestSpaceKeyDerivation:
 
         # Keys should be identical
         assert space1.message_key == space2.message_key
-        assert space1.blob_key == space2.blob_key
         assert space1.state_key == space2.state_key
         assert space1.data_key == space2.data_key
 
@@ -202,7 +197,6 @@ class TestDomainSeparation:
 
         # Keys MUST be different despite same root
         assert space1.message_key != space2.message_key
-        assert space1.blob_key != space2.blob_key
         assert space1.state_key != space2.state_key
         assert space1.data_key != space2.data_key
 
@@ -254,12 +248,11 @@ class TestSecurityProperties:
         # Create set to check uniqueness
         all_keys = {
             space.message_key,
-            space.blob_key,
             space.state_key,
             space.data_key,
         }
 
-        assert len(all_keys) == 4, "All key types should produce unique keys"
+        assert len(all_keys) == 3, "All key types should produce unique keys"
 
     def test_no_key_reuse_across_spaces(self):
         """Test defense against accidental root reuse across spaces."""

@@ -157,6 +157,13 @@ class BlobCreated:
 
 
 @dataclass
+class EncryptedBlobCreated(BlobCreated):
+    """Response when an encrypted blob is successfully uploaded, including the DEK."""
+
+    key: bytes = field(default_factory=bytes)  # 32-byte AES-256 data encryption key (DEK)
+
+
+@dataclass
 class MessageList:
     """List of messages from a topic query."""
 

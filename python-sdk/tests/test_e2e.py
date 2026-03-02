@@ -199,7 +199,7 @@ class TestEncryptedBlobs:
         created = space.encrypt_and_upload_blob(plaintext)
         assert created.blob_id is not None
 
-        decrypted = space.download_and_decrypt_blob(created.blob_id)
+        decrypted = space.download_and_decrypt_blob(created.blob_id, created.key)
         assert decrypted == plaintext
 
     def test_encrypted_blob_not_readable_as_plaintext(self, space):

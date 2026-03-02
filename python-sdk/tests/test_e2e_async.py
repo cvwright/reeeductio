@@ -176,7 +176,7 @@ class TestAsyncEncryptedBlobs:
     async def test_encrypt_upload_download_decrypt(self, space):
         plaintext = b"async encrypted blob"
         created = await space.encrypt_and_upload_blob(plaintext)
-        decrypted = await space.download_and_decrypt_blob(created.blob_id)
+        decrypted = await space.download_and_decrypt_blob(created.blob_id, created.key)
         assert decrypted == plaintext
 
     async def test_encrypted_blob_not_readable_as_plaintext(self, space):

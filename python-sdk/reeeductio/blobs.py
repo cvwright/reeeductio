@@ -6,13 +6,14 @@ Provides utilities for uploading, downloading, and managing encrypted blobs.
 
 from __future__ import annotations
 
+import os
 from io import BytesIO
 
 import httpx
 
-from .crypto import compute_hash, to_blob_id
+from .crypto import compute_hash, to_blob_id, encrypt_aes_gcm, decrypt_aes_gcm
 from .exceptions import BlobError, NotFoundError
-from .models import BlobCreated
+from .models import BlobCreated, EncryptedBlobCreated
 
 
 def compute_blob_id(data: bytes) -> str:
@@ -159,6 +160,64 @@ async def upload_blob_async(
         raise BlobError(f"Failed to upload blob: {e.response.text}") from e
     except Exception as e:
         raise BlobError(f"Failed to upload blob: {e}") from e
+
+
+def encrypt_and_upload_blob(
+    client: httpx.Client,
+    space_id: str,
+    data: bytes,
+    associated_data: bytes | None = None,
+) -> EncryptedBlobCreated:
+    """
+    Encrypt and upload a blob to the space.
+
+    Generates a random AES-256 data encryption key (DEK), encrypts the data
+    using AES-GCM-256, and uploads the encrypted blob.
+    The blob_id is computed from the encrypted content hash.
+
+    Args:
+        client: Authenticated httpx client
+        space_id: Typed space identifier
+        data: Plaintext blob data to encrypt
+        associated_data: Optional additional authenticated data (AAD)
+
+    Returns:
+        EncryptedBlobCreated with blob_id, size, and the generated DEK
+
+    Raises:
+        BlobError: If upload fails
+    """
+    key = os.urandom(32)
+    encrypted = encrypt_aes_gcm(data, key, associated_data)
+    result = upload_blob(client, space_id, encrypted)
+    return EncryptedBlobCreated(blob_id=result.blob_id, size=result.size, key=key)
+
+
+async def encrypt_and_upload_blob_async(
+    client: httpx.AsyncClient,
+    space_id: str,
+    data: bytes,
+    associated_data: bytes | None = None,
+) -> EncryptedBlobCreated:
+    """
+    Async version of encrypt_and_upload_blob.
+
+    Args:
+        client: Authenticated async httpx client
+        space_id: Typed space identifier
+        data: Plaintext blob data to encrypt
+        associated_data: Optional additional authenticated data (AAD)
+
+    Returns:
+        EncryptedBlobCreated with blob_id, size, and the generated DEK
+
+    Raises:
+        BlobError: If upload fails
+    """
+    key = os.urandom(32)
+    encrypted = encrypt_aes_gcm(data, key, associated_data)
+    result = await upload_blob_async(client, space_id, encrypted)
+    return EncryptedBlobCreated(blob_id=result.blob_id, size=result.size, key=key)
 
 
 def download_blob(

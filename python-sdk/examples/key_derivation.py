@@ -22,13 +22,11 @@ print(f"Space ID: {space_id}\n")
 
 # Derive keys manually using derive_key (with space_id scoping)
 message_key = derive_key(symmetric_root, f"message key|{space_id}")
-blob_key = derive_key(symmetric_root, f"blob key|{space_id}")
 state_key = derive_key(symmetric_root, f"state key|{space_id}")
 data_key = derive_key(symmetric_root, f"data key|{space_id}")
 
 print("Manually derived keys (scoped to space_id):")
 print(f"  message_key: {message_key.hex()[:32]}...")
-print(f"  blob_key:    {blob_key.hex()[:32]}...")
 print(f"  state_key:   {state_key.hex()[:32]}...")
 print(f"  data_key:    {data_key.hex()[:32]}...\n")
 
@@ -43,13 +41,11 @@ space = Space(
 
 print("Space client derived keys:")
 print(f"  message_key: {space.message_key.hex()[:32]}...")
-print(f"  blob_key:    {space.blob_key.hex()[:32]}...")
 print(f"  state_key:   {space.state_key.hex()[:32]}...")
 print(f"  data_key:    {space.data_key.hex()[:32]}...\n")
 
 # Verify they match
 assert message_key == space.message_key
-assert blob_key == space.blob_key
 assert state_key == space.state_key
 assert data_key == space.data_key
 
@@ -66,7 +62,6 @@ space2 = Space(
 )
 
 assert space.message_key == space2.message_key
-assert space.blob_key == space2.blob_key
 assert space.state_key == space2.state_key
 assert space.data_key == space2.data_key
 
@@ -84,7 +79,6 @@ space3 = Space(
 )
 
 assert space.message_key != space3.message_key
-assert space.blob_key != space3.blob_key
 assert space.state_key != space3.state_key
 assert space.data_key != space3.data_key
 
@@ -108,7 +102,6 @@ print(f"Space 4 ID: {different_space_id[:20]}... (different)")
 print(f"Space 4 message_key: {space4.message_key.hex()[:32]}... (different!)\n")
 
 assert space.message_key != space4.message_key
-assert space.blob_key != space4.blob_key
 assert space.state_key != space4.state_key
 assert space.data_key != space4.data_key
 

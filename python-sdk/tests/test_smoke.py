@@ -118,21 +118,16 @@ def test_imports():
 
         # Verify derived keys exist and are 32 bytes each
         assert hasattr(space, "message_key")
-        assert hasattr(space, "blob_key")
         assert hasattr(space, "state_key")
         assert hasattr(space, "data_key")
         assert len(space.message_key) == 32
-        assert len(space.blob_key) == 32
         assert len(space.state_key) == 32
         assert len(space.data_key) == 32
-        print("✓ All derived keys (message, blob, state, data) generated correctly")
+        print("✓ All derived keys (message, state, data) generated correctly")
 
         # Verify keys are different from each other
-        assert space.message_key != space.blob_key
         assert space.message_key != space.state_key
         assert space.message_key != space.data_key
-        assert space.blob_key != space.state_key
-        assert space.blob_key != space.data_key
         assert space.state_key != space.data_key
         print("✓ Derived keys are unique from each other")
 
@@ -146,7 +141,6 @@ def test_imports():
             auto_authenticate=False,
         )
         assert space.message_key == space2.message_key
-        assert space.blob_key == space2.blob_key
         assert space.state_key == space2.state_key
         assert space.data_key == space2.data_key
         print("✓ Key derivation is deterministic")
@@ -162,7 +156,6 @@ def test_imports():
             auto_authenticate=False,
         )
         assert space.message_key != space3.message_key
-        assert space.blob_key != space3.blob_key
         assert space.state_key != space3.state_key
         assert space.data_key != space3.data_key
         print("✓ Different space_ids produce different keys (prevents cross-space key reuse)")

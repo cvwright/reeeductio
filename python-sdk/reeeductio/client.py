@@ -24,7 +24,7 @@ from .crypto import Ed25519KeyPair, decrypt_aes_gcm, encrypt_aes_gcm, derive_key
 from .exceptions import ChainError, NotFoundError, StreamError, ValidationError
 from .messages import validate_message_chain_with_anchor, verify_message_hash
 from .local_store import LocalMessageStore
-from .models import BlobCreated, DataEntry, Message, MessageCreated
+from .models import BlobCreated, EncryptedBlobCreated, DataEntry, Message, MessageCreated
 
 
 class Space:
@@ -41,11 +41,9 @@ class Space:
         symmetric_root: 256-bit root key for HKDF derivation
         user_symmetric_key: Optional 256-bit user-private key (not shared with space)
         message_key: Derived key for message encryption (32 bytes)
-        blob_key: Derived key for blob encryption (32 bytes)
         state_key: Derived key for state encryption (32 bytes)
         data_key: Derived key for data encryption (32 bytes)
         user_message_key: User-private message key (None if no user_symmetric_key)
-        user_blob_key: User-private blob key (None if no user_symmetric_key)
         user_data_key: User-private data key (None if no user_symmetric_key)
         base_url: Base URL of the reeeductio server
         auth: Authentication session manager
@@ -76,8 +74,8 @@ class Space:
                 messages are cached locally and retrieved from cache when available.
             user_symmetric_key: Optional 256-bit (32-byte) user-private key for
                 encrypting data that is confidential against other space members.
-                When provided, used to derive user_message_key, user_blob_key, and
-                user_data_key for user-private encryption.
+                When provided, used to derive user_message_key and user_data_key
+                for user-private encryption.
 
         Raises:
             ValueError: If symmetric_root is not exactly 32 bytes
@@ -100,7 +98,6 @@ class Space:
         # Derive encryption keys from symmetric_root using HKDF
         # Include space_id in info for domain separation (prevents key reuse across spaces)
         self.message_key = derive_key(symmetric_root, f"message key | {space_id}")
-        self.blob_key = derive_key(symmetric_root, f"blob key | {space_id}")
         self.data_key = derive_key(symmetric_root, f"data key | {space_id}")
         # State key is actually just a topic key for the "state" topic
         self.state_key = derive_key(self.message_key, "topic key | state")
@@ -111,11 +108,9 @@ class Space:
         # user_symmetric_key is not shared with the space.
         if user_symmetric_key is not None:
             self.user_message_key: bytes | None = derive_key(user_symmetric_key, f"user message key | {space_id}")
-            self.user_blob_key: bytes | None = derive_key(user_symmetric_key, f"user blob key | {space_id}")
             self.user_data_key: bytes | None = derive_key(user_symmetric_key, f"user data key | {space_id}")
         else:
             self.user_message_key = None
-            self.user_blob_key = None
             self.user_data_key = None
 
         # Create authentication session
@@ -667,22 +662,21 @@ class Space:
         """
         return blobs.upload_blob(self.client, self.space_id, data)
 
-    def encrypt_and_upload_blob(self, data: bytes) -> BlobCreated:
+    def encrypt_and_upload_blob(self, data: bytes) -> EncryptedBlobCreated:
         """
         Encrypt and upload a blob.
 
-        The data is encrypted using AES-GCM-256 with the blob key before upload.
+        Generates a random AES-256 data encryption key (DEK), encrypts the data
+        using AES-GCM-256, and uploads the encrypted blob.
         The blob_id is computed from the encrypted content hash.
 
         Args:
             data: Plaintext blob data to encrypt and upload
 
         Returns:
-            BlobCreated with blob_id and size
+            EncryptedBlobCreated with blob_id, size, and the generated DEK
         """
-        # Encrypt using blob key
-        encrypted_data = encrypt_aes_gcm(data, self.blob_key)
-        return blobs.upload_blob(self.client, self.space_id, encrypted_data)
+        return blobs.encrypt_and_upload_blob(self.client, self.space_id, data)
 
     def download_plaintext_blob(self, blob_id: str) -> bytes:
         """
@@ -696,14 +690,16 @@ class Space:
         """
         return blobs.download_blob(self.client, self.space_id, blob_id)
 
-    def download_and_decrypt_blob(self, blob_id: str) -> bytes:
+    def download_and_decrypt_blob(self, blob_id: str, key: bytes) -> bytes:
         """
         Download and decrypt encrypted blob.
 
-        The blob is decrypted using AES-GCM-256 with the blob key.
+        The blob is decrypted using AES-GCM-256 with the provided DEK,
+        which was returned by encrypt_and_upload_blob().
 
         Args:
             blob_id: Typed blob identifier
+            key: 32-byte AES-256 data encryption key (DEK)
 
         Returns:
             Decrypted plaintext blob data
@@ -711,13 +707,8 @@ class Space:
         Raises:
             cryptography.exceptions.InvalidTag: If decryption fails (wrong key or corrupted data)
         """
-        # Download encrypted data
         encrypted_data = blobs.download_blob(self.client, self.space_id, blob_id)
-
-        # Decrypt using blob key
-        plaintext_data = decrypt_aes_gcm(encrypted_data, self.blob_key)
-
-        return plaintext_data
+        return decrypt_aes_gcm(encrypted_data, key)
 
     def delete_blob(self, blob_id: str) -> None:
         """
@@ -1806,11 +1797,9 @@ class AsyncSpace:
         symmetric_root: 256-bit root key for HKDF derivation
         user_symmetric_key: Optional 256-bit user-private key (not shared with space)
         message_key: Derived key for message encryption (32 bytes)
-        blob_key: Derived key for blob encryption (32 bytes)
         state_key: Derived key for state encryption (32 bytes)
         data_key: Derived key for data encryption (32 bytes)
         user_message_key: User-private message key (None if no user_symmetric_key)
-        user_blob_key: User-private blob key (None if no user_symmetric_key)
         user_data_key: User-private data key (None if no user_symmetric_key)
         base_url: Base URL of the reeeductio server
         auth: Async authentication session manager
@@ -1841,8 +1830,8 @@ class AsyncSpace:
                 messages are cached locally and retrieved from cache when available.
             user_symmetric_key: Optional 256-bit (32-byte) user-private key for
                 encrypting data that is confidential against other space members.
-                When provided, used to derive user_message_key, user_blob_key, and
-                user_data_key for user-private encryption.
+                When provided, used to derive user_message_key and user_data_key
+                for user-private encryption.
 
         Raises:
             ValueError: If symmetric_root is not exactly 32 bytes
@@ -1864,7 +1853,6 @@ class AsyncSpace:
 
         # Derive encryption keys from symmetric_root using HKDF
         self.message_key = derive_key(symmetric_root, f"message key | {space_id}")
-        self.blob_key = derive_key(symmetric_root, f"blob key | {space_id}")
         self.data_key = derive_key(symmetric_root, f"data key | {space_id}")
         self.state_key = derive_key(self.message_key, "topic key | state")
 
@@ -1873,11 +1861,9 @@ class AsyncSpace:
         # user_symmetric_key is not shared with the space.
         if user_symmetric_key is not None:
             self.user_message_key: bytes | None = derive_key(user_symmetric_key, f"user message key | {space_id}")
-            self.user_blob_key: bytes | None = derive_key(user_symmetric_key, f"user blob key | {space_id}")
             self.user_data_key: bytes | None = derive_key(user_symmetric_key, f"user data key | {space_id}")
         else:
             self.user_message_key = None
-            self.user_blob_key = None
             self.user_data_key = None
 
         # Create async authentication session
@@ -2403,22 +2389,38 @@ class AsyncSpace:
         client = await self.get_client()
         return await blobs.upload_blob_async(client, self.space_id, data)
 
-    async def encrypt_and_upload_blob(self, data: bytes) -> BlobCreated:
-        """Encrypt and upload a blob."""
-        encrypted_data = encrypt_aes_gcm(data, self.blob_key)
+    async def encrypt_and_upload_blob(self, data: bytes) -> EncryptedBlobCreated:
+        """
+        Encrypt and upload a blob.
+
+        Generates a random AES-256 data encryption key (DEK), encrypts the data
+        using AES-GCM-256, and uploads the encrypted blob.
+
+        Returns:
+            EncryptedBlobCreated with blob_id, size, and the generated DEK
+        """
         client = await self.get_client()
-        return await blobs.upload_blob_async(client, self.space_id, encrypted_data)
+        return await blobs.encrypt_and_upload_blob_async(client, self.space_id, data)
 
     async def download_plaintext_blob(self, blob_id: str) -> bytes:
         """Download plaintext blob."""
         client = await self.get_client()
         return await blobs.download_blob_async(client, self.space_id, blob_id)
 
-    async def download_and_decrypt_blob(self, blob_id: str) -> bytes:
-        """Download and decrypt encrypted blob."""
+    async def download_and_decrypt_blob(self, blob_id: str, key: bytes) -> bytes:
+        """
+        Download and decrypt encrypted blob.
+
+        Args:
+            blob_id: Typed blob identifier
+            key: 32-byte AES-256 data encryption key (DEK) returned by encrypt_and_upload_blob()
+
+        Returns:
+            Decrypted plaintext blob data
+        """
         client = await self.get_client()
         encrypted_data = await blobs.download_blob_async(client, self.space_id, blob_id)
-        return decrypt_aes_gcm(encrypted_data, self.blob_key)
+        return decrypt_aes_gcm(encrypted_data, key)
 
     async def delete_blob(self, blob_id: str) -> None:
         """Delete blob."""
