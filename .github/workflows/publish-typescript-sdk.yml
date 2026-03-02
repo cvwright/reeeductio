@@ -1,0 +1,46 @@
+name: Publish TypeScript SDK
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'               # full release: triggers all publish workflows
+      - 'typescript-sdk/v[0-9]*' # SDK-only release
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # required for npm provenance
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#typescript-sdk/}"
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Set package version
+        working-directory: typescript-sdk
+        run: npm version ${{ env.VERSION }} --no-git-tag-version
+
+      - name: Install dependencies
+        working-directory: typescript-sdk
+        run: npm ci
+
+      - name: Build
+        working-directory: typescript-sdk
+        run: npm run build
+
+      - name: Publish to npm
+        working-directory: typescript-sdk
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
