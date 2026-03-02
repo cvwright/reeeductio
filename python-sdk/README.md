@@ -19,13 +19,13 @@ A clean, modern Python SDK for the [reeeductio Spaces API](https://github.com/cv
 ## Installation
 
 ```bash
-pip install reeeductio-client
+pip install reeeductio
 ```
 
 Or install from source:
 
 ```bash
-cd new-python-sdk
+cd python-sdk
 pip install -e .
 ```
 
@@ -37,7 +37,7 @@ import os
 
 # Generate a key pair
 keypair = generate_keypair()
-user_id = keypair.to_user_id()
+member_id = keypair.to_user_id()  # 44-char typed user identifier starting with 'U'
 
 # Generate or retrieve the space's symmetric root key (32 bytes)
 symmetric_root = os.urandom(32)  # In practice, derive from space key or shared secret
@@ -45,21 +45,21 @@ symmetric_root = os.urandom(32)  # In practice, derive from space key or shared 
 # Connect to a space
 # The Space client automatically derives encryption keys on init:
 #   - message_key (for encrypting messages)
-#   - blob_key (for encrypting blobs)
 #   - state_key (for encrypting state)
 #   - data_key (for encrypting KV data)
 with Space(
-    space_id="Cabc123...",  # 44-char space ID
-    keypair=keypair,
-    symmetric_root=symmetric_root,  # 256-bit root key for encryption
+    space_id="Sabc123...",       # 44-char space ID
+    member_id=member_id,         # typed user/tool identifier
+    private_key=keypair.private_key,  # raw 32-byte Ed25519 private key
+    symmetric_root=symmetric_root,    # 256-bit root key for encryption
     base_url="http://localhost:8000"
 ) as space:
-    # Keys are available as space.message_key, space.blob_key, etc.
+    # Keys are available as space.message_key, space.state_key, space.data_key
     # Post a message
     result = space.post_message(
         topic_id="general",
         msg_type="chat",
-        data=b"Hello, world!"  # Should be encrypted
+        data=b"Hello, world!"  # Should be encrypted before passing
     )
     print(f"Posted message: {result.message_hash}")
 
@@ -68,8 +68,8 @@ with Space(
     for msg in messages:
         print(f"{msg.sender}: {msg.data}")
 
-    # Upload a blob
-    blob = space.upload_blob(b"file contents")
+    # Upload an encrypted blob
+    blob = space.encrypt_and_upload_blob(b"file contents")
     print(f"Uploaded blob: {blob.blob_id}")
 
     # Set state
@@ -85,8 +85,8 @@ with Space(
 ### Components
 
 - **Space**: High-level client for interacting with a space
-- **Messages**: Blockchain-style append-only message streams
-- **State**: Event-sourced key-value store (stored as messages in "state" topic)
+- **Topics**: Blockchain-style append-only message streams
+- **State**: Event-sourced key-value store (stored as messages in the special `state` topic)
 - **Data**: Simple signed key-value store
 - **Blobs**: Content-addressed encrypted file storage
 - **Auth**: Challenge-response authentication with Ed25519 signatures
@@ -95,7 +95,7 @@ with Space(
 
 All identifiers use typed base64 encoding with a header byte:
 - User IDs start with `U` (e.g., `Uabc123...`)
-- Space IDs start with `C` (e.g., `Cabc123...`)
+- Space IDs start with `S` (e.g., `Sabc123...`)
 - Message IDs start with `M` (e.g., `Mabc123...`)
 - Blob IDs start with `B` (e.g., `Babc123...`)
 - Tool IDs start with `T` (e.g., `Tabc123...`)
@@ -122,7 +122,6 @@ space = Space(space_id, keypair, symmetric_root)
 
 # Automatically derived on initialization (scoped to space_id):
 space.message_key  # HKDF(symmetric_root, info="message key | {space_id}") → 32 bytes
-space.blob_key     # HKDF(symmetric_root, info="blob key | {space_id}") → 32 bytes
 space.data_key     # HKDF(symmetric_root, info="data key | {space_id}") → 32 bytes
 space.state_key    # HKDF(message_key, info="topic key | state") → 32 bytes
 ```
@@ -151,10 +150,13 @@ class Space:
     def __init__(
         self,
         space_id: str,
-        keypair: Ed25519KeyPair,
-        symmetric_root: bytes,  # 256-bit (32-byte) root key for HKDF
+        member_id: str,             # typed user/tool identifier (e.g. keypair.to_user_id())
+        private_key: bytes,         # raw 32-byte Ed25519 private key
+        symmetric_root: bytes,      # 256-bit (32-byte) root key for HKDF
         base_url: str = "http://localhost:8000",
         auto_authenticate: bool = True,
+        local_store: LocalMessageStore | None = None,
+        user_symmetric_key: bytes | None = None,  # optional user-private key
     )
 
     # Authentication
@@ -162,8 +164,8 @@ class Space:
 
     # Messages
     def post_message(self, topic_id: str, msg_type: str, data: bytes, prev_hash: str | None = None) -> MessageCreated
-    def get_messages(self, topic_id: str, from_timestamp: int | None = None, to_timestamp: int | None = None, limit: int = 100) -> list[Message]
-    def get_message(self, topic_id: str, message_hash: str) -> Message
+    def get_messages(self, topic_id: str, from_timestamp: int | None = None, to_timestamp: int | None = None, limit: int = 100, use_cache: bool = True, validate_chain: bool = True) -> list[Message]
+    def get_message(self, topic_id: str, message_hash: str, use_cache: bool = True) -> Message
 
     # State
     def get_state(self, path: str) -> Message
@@ -175,8 +177,10 @@ class Space:
     def set_data(self, path: str, data: bytes) -> int
 
     # Blobs
-    def upload_blob(self, data: bytes) -> BlobCreated
-    def download_blob(self, blob_id: str) -> bytes
+    def upload_plaintext_blob(self, data: bytes) -> BlobCreated
+    def encrypt_and_upload_blob(self, data: bytes) -> EncryptedBlobCreated
+    def download_plaintext_blob(self, blob_id: str) -> bytes
+    def download_and_decrypt_blob(self, blob_id: str, key: bytes) -> bytes
     def delete_blob(self, blob_id: str) -> None
 ```
 
@@ -199,24 +203,20 @@ hash_bytes = compute_hash(b"data to hash")
 
 ## Development Status
 
-This is a clean-slate rewrite of the reeeductio Python SDK, built without auto-generated code for better maintainability and developer experience.
-
 ### Implemented
 - ✅ Core models (Message, Capability, etc.)
-- ✅ Cryptography (Ed25519 signing, HKDF key derivation)
+- ✅ Cryptography (Ed25519 signing, HKDF key derivation, AES-GCM encryption)
 - ✅ Authentication (challenge-response)
 - ✅ Message posting and retrieval
 - ✅ State management
 - ✅ Data (KV) storage
-- ✅ Blob upload/download
-- ✅ Sync API using httpx
+- ✅ Blob upload/download (plaintext and encrypted)
+- ✅ Sync API (`Space`) using httpx
+- ✅ Async API (`AsyncSpace`) with WebSocket streaming
+- ✅ Local message cache (`LocalMessageStore`)
 - ✅ Comprehensive test suite (pytest)
 
 ### Coming Soon
-- ⏳ Async client support
-- ⏳ WebSocket streaming
-- ⏳ Message encryption helpers (AES-GCM)
-- ⏳ Blob encryption helpers
 - ⏳ Additional examples
 
 ## Testing
@@ -246,7 +246,7 @@ See [tests/README.md](tests/README.md) for more details.
 
 ## License
 
-[Your License Here]
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT License](LICENSE-MIT) at your option.
 
 ## Contributing
 
