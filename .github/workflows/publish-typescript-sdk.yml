@@ -29,7 +29,7 @@ jobs:
 
       - name: Set package version
         working-directory: typescript-sdk
-        run: npm version ${{ env.VERSION }} --no-git-tag-version
+        run: npm pkg set "version=${VERSION}"
 
       - name: Install dependencies
         working-directory: typescript-sdk
