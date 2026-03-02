@@ -247,7 +247,3 @@ See [tests/README.md](tests/README.md) for more details.
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT License](LICENSE-MIT) at your option.
-
-## Contributing
-
-Contributions welcome! Please open an issue or PR.
