@@ -3,7 +3,7 @@
 import click
 
 from ...client import AdminClient
-from ..utils import handle_errors, parse_private_key
+from ..utils import echo_verbose, get_credential, handle_errors, parse_private_key
 
 
 @click.group()
@@ -16,7 +16,7 @@ def auth():
 @click.option(
     "--private-key",
     "-k",
-    required=True,
+    default=None,
     help="Admin private key in hex format",
 )
 @click.pass_context
@@ -24,7 +24,10 @@ def auth():
 def test_auth(ctx, private_key: str):
     """Test admin authentication against the server."""
     base_url = ctx.obj["base_url"]
+    private_key = get_credential(ctx, private_key, "private_key", "'--private-key' / '-k'")
     keypair = parse_private_key(private_key)
+    echo_verbose(ctx, f"Space ID: {keypair.to_space_id()}")
+    echo_verbose(ctx, f"User ID:  {keypair.to_user_id()}")
 
     click.echo(f"Testing authentication to {base_url}...")
 

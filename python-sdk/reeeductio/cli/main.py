@@ -1,8 +1,13 @@
 """Main CLI entry point."""
 
+import logging
+import sys
+
 import click
+from click.core import ParameterSource
 
 from .commands import auth, blob, key, opaque, role, space, tool, user
+from .utils import parse_credentials_file
 
 
 def _get_version() -> str:
@@ -29,12 +34,54 @@ def _get_version() -> str:
     default="text",
     help="Output format",
 )
+@click.option(
+    "--credentials-file",
+    "-f",
+    default=None,
+    help="Path to credentials file (JSON or plain text)",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Enable verbose/debug output",
+)
 @click.pass_context
-def cli(ctx, base_url: str, output: str):
+def cli(ctx, base_url: str, output: str, credentials_file: str | None, verbose: bool):
     """Reeeductio admin CLI for space management."""
     ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+
+    if verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="[%(name)s] %(message)s",
+            stream=sys.stderr,
+        )
+    else:
+        logging.basicConfig(level=logging.WARNING)
+
+    ctx.obj["credentials"] = {}
+    if credentials_file:
+        creds = parse_credentials_file(credentials_file)
+        ctx.obj["credentials"] = creds
+        # Use server from credentials file only if --base-url was not explicitly set
+        if "base_url" in creds and ctx.get_parameter_source("base_url") == ParameterSource.DEFAULT:
+            base_url = creds["base_url"]
+        if verbose:
+            click.echo(f"Credentials loaded from: {credentials_file}", err=True)
     ctx.obj["base_url"] = base_url
     ctx.obj["output"] = output
+    if verbose:
+        click.echo(f"Server: {base_url}", err=True)
+
+
+@cli.command()
+@click.pass_context
+def help(ctx):
+    """Show this help message and exit."""
+    click.echo(ctx.parent.get_help())
 
 
 # Register command groups

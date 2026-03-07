@@ -3,7 +3,7 @@
 import click
 
 from ...client import Space
-from ..utils import handle_errors, parse_private_key
+from ..utils import echo_verbose, get_credential, handle_errors, parse_private_key
 
 
 @click.group()
@@ -17,13 +17,13 @@ def role():
 @click.option(
     "--space-key",
     "-k",
-    required=True,
+    default=None,
     help="Space owner's private key in hex format",
 )
 @click.option(
     "--symmetric-root",
     "-s",
-    required=True,
+    default=None,
     help="Space's symmetric root key in hex format",
 )
 @click.option(
@@ -41,9 +41,12 @@ def create_role(ctx, role_name: str, space_key: str, symmetric_root: str, descri
     """
     base_url = ctx.obj["base_url"]
 
+    space_key = get_credential(ctx, space_key, "private_key", "'--space-key' / '-k'")
+    symmetric_root = get_credential(ctx, symmetric_root, "symmetric_root", "'--symmetric-root' / '-s'")
     keypair = parse_private_key(space_key)
     sym_root = _parse_symmetric_root(symmetric_root)
     space_id = keypair.to_space_id()
+    echo_verbose(ctx, f"Space ID: {space_id}")
 
     with Space(
         space_id=space_id,
@@ -63,13 +66,13 @@ def create_role(ctx, role_name: str, space_key: str, symmetric_root: str, descri
 @click.option(
     "--space-key",
     "-k",
-    required=True,
+    default=None,
     help="Space owner's private key in hex format",
 )
 @click.option(
     "--symmetric-root",
     "-s",
-    required=True,
+    default=None,
     help="Space's symmetric root key in hex format",
 )
 @click.option(
@@ -98,9 +101,12 @@ def grant_to_role(ctx, role_name: str, space_key: str, symmetric_root: str, cap_
     """
     base_url = ctx.obj["base_url"]
 
+    space_key = get_credential(ctx, space_key, "private_key", "'--space-key' / '-k'")
+    symmetric_root = get_credential(ctx, symmetric_root, "symmetric_root", "'--symmetric-root' / '-s'")
     keypair = parse_private_key(space_key)
     sym_root = _parse_symmetric_root(symmetric_root)
     space_id = keypair.to_space_id()
+    echo_verbose(ctx, f"Space ID: {space_id}")
 
     with Space(
         space_id=space_id,

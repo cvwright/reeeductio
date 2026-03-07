@@ -7,7 +7,7 @@ import click
 
 from ...client import Space
 from ...crypto import get_identifier_type
-from ..utils import handle_errors, parse_private_key
+from ..utils import echo_verbose, get_credential, handle_errors, parse_private_key
 
 
 @click.group()
@@ -21,13 +21,13 @@ def tool():
 @click.option(
     "--space-key",
     "-k",
-    required=True,
+    default=None,
     help="Space owner's private key in hex format",
 )
 @click.option(
     "--symmetric-root",
     "-s",
-    required=True,
+    default=None,
     help="Space's symmetric root key in hex format",
 )
 @click.pass_context
@@ -49,9 +49,12 @@ def add_tool(ctx, tool_id: str, space_key: str, symmetric_root: str):
     except ValueError as e:
         raise click.BadParameter(str(e))
 
+    space_key = get_credential(ctx, space_key, "private_key", "'--space-key' / '-k'")
+    symmetric_root = get_credential(ctx, symmetric_root, "symmetric_root", "'--symmetric-root' / '-s'")
     keypair = parse_private_key(space_key)
     sym_root = _parse_symmetric_root(symmetric_root)
     space_id = keypair.to_space_id()
+    echo_verbose(ctx, f"Space ID: {space_id}")
     admin_user_id = keypair.to_user_id()
 
     # Create tool authorization data
@@ -79,13 +82,13 @@ def add_tool(ctx, tool_id: str, space_key: str, symmetric_root: str):
 @click.option(
     "--space-key",
     "-k",
-    required=True,
+    default=None,
     help="Space owner's private key in hex format",
 )
 @click.option(
     "--symmetric-root",
     "-s",
-    required=True,
+    default=None,
     help="Space's symmetric root key in hex format",
 )
 @click.pass_context
@@ -101,9 +104,12 @@ def remove_tool(ctx, tool_id: str, space_key: str, symmetric_root: str):
     if len(tool_id) != 44:
         raise click.BadParameter(f"Tool ID must be 44 characters, got {len(tool_id)}")
 
+    space_key = get_credential(ctx, space_key, "private_key", "'--space-key' / '-k'")
+    symmetric_root = get_credential(ctx, symmetric_root, "symmetric_root", "'--symmetric-root' / '-s'")
     keypair = parse_private_key(space_key)
     sym_root = _parse_symmetric_root(symmetric_root)
     space_id = keypair.to_space_id()
+    echo_verbose(ctx, f"Space ID: {space_id}")
 
     with Space(
         space_id=space_id,
@@ -123,13 +129,13 @@ def remove_tool(ctx, tool_id: str, space_key: str, symmetric_root: str):
 @click.option(
     "--space-key",
     "-k",
-    required=True,
+    default=None,
     help="Space owner's private key in hex format",
 )
 @click.option(
     "--symmetric-root",
     "-s",
-    required=True,
+    default=None,
     help="Space's symmetric root key in hex format",
 )
 @click.option(
@@ -144,9 +150,12 @@ def list_tools(ctx, space_key: str, symmetric_root: str, output_format: str):
     """List tools in the space (via state history)."""
     base_url = ctx.obj["base_url"]
 
+    space_key = get_credential(ctx, space_key, "private_key", "'--space-key' / '-k'")
+    symmetric_root = get_credential(ctx, symmetric_root, "symmetric_root", "'--symmetric-root' / '-s'")
     keypair = parse_private_key(space_key)
     sym_root = _parse_symmetric_root(symmetric_root)
     space_id = keypair.to_space_id()
+    echo_verbose(ctx, f"Space ID: {space_id}")
 
     with Space(
         space_id=space_id,
@@ -184,13 +193,13 @@ def list_tools(ctx, space_key: str, symmetric_root: str, output_format: str):
 @click.option(
     "--space-key",
     "-k",
-    required=True,
+    default=None,
     help="Space owner's private key in hex format",
 )
 @click.option(
     "--symmetric-root",
     "-s",
-    required=True,
+    default=None,
     help="Space's symmetric root key in hex format",
 )
 @click.option(
@@ -228,9 +237,12 @@ def grant_tool(ctx, tool_id: str, space_key: str, symmetric_root: str, cap_id: s
     except ValueError as e:
         raise click.BadParameter(str(e))
 
+    space_key = get_credential(ctx, space_key, "private_key", "'--space-key' / '-k'")
+    symmetric_root = get_credential(ctx, symmetric_root, "symmetric_root", "'--symmetric-root' / '-s'")
     keypair = parse_private_key(space_key)
     sym_root = _parse_symmetric_root(symmetric_root)
     space_id = keypair.to_space_id()
+    echo_verbose(ctx, f"Space ID: {space_id}")
 
     with Space(
         space_id=space_id,

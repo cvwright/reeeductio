@@ -7,7 +7,7 @@ import click
 
 from ...client import Space, AdminSpace
 from ...crypto import generate_keypair
-from ..utils import handle_errors, parse_private_key
+from ..utils import echo_verbose, get_credential, handle_errors, parse_private_key
 
 
 @click.group()
@@ -20,7 +20,7 @@ def space():
 @click.option(
     "--private-key",
     "-k",
-    required=True,
+    default=None,
     help="Private key for the new space owner (hex format). If not provided, generates a new one.",
 )
 @click.option(
@@ -46,11 +46,17 @@ def create(ctx, private_key: str, symmetric_root: str|None, output_format: str):
     base_url = ctx.obj["base_url"]
 
     # Parse or generate keypair
+    private_key = get_credential(ctx, private_key, "private_key", "'--private-key' / '-k'")
     admin_keypair = parse_private_key(private_key)
+    # Fall back to credentials file for symmetric root before auto-generating
+    if symmetric_root is None:
+        symmetric_root = ctx.obj.get("credentials", {}).get("symmetric_root")
     sym_root = _parse_symmetric_root(symmetric_root)
 
     admin_space_id = admin_keypair.to_space_id()
     admin_user_id = admin_keypair.to_user_id()
+    echo_verbose(ctx, f"Admin space ID: {admin_space_id}")
+    echo_verbose(ctx, f"Admin user ID:  {admin_user_id}")
 
     # Create the admin space by authenticating to it (backend auto-creates on first auth)
     with AdminSpace(
