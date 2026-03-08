@@ -62,6 +62,6 @@ See [DOCS_PLAN.md](DOCS_PLAN.md) for the full analysis and rationale.
 
 ## Security Section
 
-- [ ] `security/overview.md` — simplified: what the system protects, what it doesn't
-- [ ] `security/threat-model.md` — in scope / out of scope; honest about audit status
-- [ ] `security/internals.md` — reorganize `docs-internal/` content for security-curious developers
+- [x] `security/overview.md` — simplified: what the system protects, what it doesn't
+- [x] `security/threat-model.md` — in scope / out of scope; honest about audit status
+- [x] `security/internals.md` — reorganize `docs-internal/` content for security-curious developers
