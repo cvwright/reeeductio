@@ -1,6 +1,6 @@
 # Tool Accounts
 
-**Tools** are bot or service accounts that authenticate with the server just like users, but with no ambient authority — every permission must be explicitly granted. Use them for:
+**Tools** are bot or service accounts that authenticate with the server just like users, but without the ability to have roles — every permission must be explicitly granted. Use them for:
 
 - Automated posting bots (alerts, notifications, CI/CD updates)
 - Background workers that read or process messages

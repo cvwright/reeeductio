@@ -112,10 +112,11 @@ Start Caddy and it provisions and renews certificates automatically.
 
 ## Setting up the admin space
 
-With `auto_create_spaces: false`, you must bootstrap an admin space on first run. This gives you control over who can create spaces on your server.
+With `auto_create_spaces: false`, you control which spaces exist. The admin space is the special space that tracks registered spaces and server-level users.
+
+**Step 1.** Generate admin credentials (do this once, store the keys securely)
 
 ```bash
-# 1. Generate admin credentials (do this once, store the keys securely)
 reeeductio-admin space generate
 
 # Output:
@@ -123,17 +124,17 @@ reeeductio-admin space generate
 # User ID:         U...
 # Private Key:     <hex>
 # Symmetric Root:  <hex>
-
-# 2. Add the admin space ID to your config:
-#    admin:
-#      admin_space_id: <the S... value above>
-
-# 3. Bootstrap the admin space (run once after first start)
-reeeductio-admin space bootstrap \
-    --space-key <private-key-hex> \
-    --symmetric-root <symmetric-root-hex> \
-    --base-url https://api.yourserver.com
 ```
+
+**Step 2.** Copy the Space ID into your config file:
+
+```yaml
+admin:
+  admin_space_id: S...   # paste the Space ID from step 1
+  auto_create_spaces: false
+```
+
+The server initializes the admin space automatically on first startup when it finds `admin_space_id` in the config. The admin credentials (private key and symmetric root) stay on your client machine — the server only needs the space ID.
 
 ## Blob storage options
 
