@@ -10,13 +10,13 @@ See [DOCS_PLAN.md](DOCS_PLAN.md) for the full analysis and rationale.
 
 ## Diagrams (Mermaid)
 
-- [ ] System architecture — client ↔ server ↔ storage
-- [ ] Data model — Space → Topics / State / Blobs / KV
-- [ ] Authentication flow — challenge-response → JWT sequence diagram
-- [ ] Key derivation tree — symmetric_root → message/blob/state/data keys
-- [ ] Message chain — how prev_hash links messages
-- [ ] Capability chain of trust — how rights flow from space creator
-- [ ] OPAQUE login flow — optional password login sequence
+- [x] System architecture — client ↔ server ↔ storage (`index.md`)
+- [x] Data model — Space → Topics / State / Blobs / KV (`concepts/spaces.md`)
+- [x] Authentication flow — challenge-response → JWT sequence diagram (`concepts/spaces.md`)
+- [x] Key derivation tree — symmetric_root → message/blob/state/data keys (`concepts/spaces.md`)
+- [x] Message chain — how prev_hash links messages (`concepts/topics-and-messages.md`)
+- [x] Capability chain of trust — how rights flow from space creator (`concepts/access-control.md`)
+- [x] OPAQUE login flow — optional password login sequence (`how-to/password-login.md`)
 
 ## Home / Introduction
 
@@ -44,14 +44,14 @@ See [DOCS_PLAN.md](DOCS_PLAN.md) for the full analysis and rationale.
 
 ## How-To Guides
 
-- [ ] `how-to/create-a-space.md`
-- [ ] `how-to/add-users.md`
-- [ ] `how-to/send-messages.md`
-- [ ] `how-to/store-files.md`
-- [ ] `how-to/manage-permissions.md`
-- [ ] `how-to/password-login.md` — OPAQUE opt-in setup
-- [ ] `how-to/tool-accounts.md` — bots, invite links, scoped API keys
-- [ ] `how-to/self-hosting.md` — production deployment guide
+- [x] `how-to/create-a-space.md`
+- [x] `how-to/add-users.md`
+- [x] `how-to/send-messages.md`
+- [x] `how-to/store-files.md`
+- [x] `how-to/manage-permissions.md`
+- [x] `how-to/password-login.md` — OPAQUE opt-in setup
+- [x] `how-to/tool-accounts.md` — bots, invite links, scoped API keys
+- [x] `how-to/self-hosting.md` — production deployment guide
 
 ## SDK Reference
 
