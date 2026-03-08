@@ -36,11 +36,11 @@ See [DOCS_PLAN.md](DOCS_PLAN.md) for the full analysis and rationale.
 
 ## Core Concepts
 
-- [ ] `concepts/spaces.md` — what a space is, when to use it, diagram
-- [ ] `concepts/topics-and-messages.md` — topics, message chains, ordering guarantees
-- [ ] `concepts/state-and-data.md` — event-sourced state vs. lightweight KV; when to use each
-- [ ] `concepts/blobs.md` — content-addressed encrypted file storage
-- [ ] `concepts/access-control.md` — users, roles, capabilities explained for developers (not security experts)
+- [x] `concepts/spaces.md` — what a space is, when to use it, diagram
+- [x] `concepts/topics-and-messages.md` — topics, message chains, ordering guarantees
+- [x] `concepts/state-and-data.md` — event-sourced state vs. lightweight KV; when to use each
+- [x] `concepts/blobs.md` — content-addressed encrypted file storage
+- [x] `concepts/access-control.md` — users, roles, capabilities explained for developers (not security experts)
 
 ## How-To Guides
 
