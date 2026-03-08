@@ -55,10 +55,10 @@ See [DOCS_PLAN.md](DOCS_PLAN.md) for the full analysis and rationale.
 
 ## SDK Reference
 
-- [ ] `reference/python-sdk.md` — module-by-module reference with examples
-- [ ] `reference/typescript-sdk.md` — same for TypeScript SDK
-- [ ] `reference/api.md` — OpenAPI overview, link to `/docs` endpoint, explain ID format
-- [ ] `reference/server-config.md` — consolidate from `backend/DOCKER.md`, `backend/LOGGING.md`, `backend/ADMIN.md`
+- [x] `reference/python-sdk.md` — module-by-module reference with examples
+- [x] `reference/typescript-sdk.md` — same for TypeScript SDK
+- [x] `reference/api.md` — OpenAPI overview, link to `/docs` endpoint, explain ID format
+- [x] `reference/server-config.md` — consolidate from `backend/DOCKER.md`, `backend/LOGGING.md`, `backend/ADMIN.md`
 
 ## Security Section
 
